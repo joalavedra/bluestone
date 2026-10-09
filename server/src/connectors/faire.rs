@@ -203,31 +203,31 @@ impl Connector for Faire {
 
     async fn fetch_orders(&self, since: &str) -> Result<Vec<RemoteOrderLine>> {
         let orders = self
-            .paged(
-                "/orders",
-                "orders",
-                &[("created_at_min", since), ("excluded_states", "CANCELED")],
-            )
+            .paged("/orders", "orders", &[("created_at_min", since)])
             .await?;
         Ok(orders
             .iter()
-            .filter(|o| o["state"] != "CANCELED")
             .flat_map(|o| {
                 let order = s(&o["id"]);
                 let at = s(&o["created_at"]);
+                // Canceled orders/items come back with quantity 0 so a later cancellation undoes the sale.
+                let canceled = o["state"] == "CANCELED";
                 o["items"]
                     .as_array()
                     .cloned()
                     .unwrap_or_default()
                     .into_iter()
-                    .filter(|i| i["state"] != "CANCELED")
                     .map(move |i| RemoteOrderLine {
                         external_order_id: order.clone(),
                         external_line_id: s(&i["id"]),
                         external_product_id: s(&i["product_id"]),
                         external_variant_id: s(&i["variant_id"]),
                         sku: Some(s(&i["sku"])).filter(|x| !x.is_empty()),
-                        quantity: i["quantity"].as_i64().unwrap_or(0),
+                        quantity: if canceled || i["state"] == "CANCELED" {
+                            0
+                        } else {
+                            i["quantity"].as_i64().unwrap_or(0)
+                        },
                         unit_price: cents(&i["price"]["amount_minor"])
                             .or_else(|| cents(&i["price_cents"])),
                         ordered_at: at.clone(),

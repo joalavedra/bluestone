@@ -1465,7 +1465,7 @@ impl Service {
             "listing_status" => {
                 let status = p.after["status"].as_str().unwrap_or_default();
                 conn.set_status(&target, status).await?;
-                let local = if r.kind == "prestashop" && status != "active" {
+                let local = if (r.kind == "prestashop" || r.kind == "faire") && status != "active" {
                     "draft"
                 } else {
                     status
