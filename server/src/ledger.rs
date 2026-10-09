@@ -127,21 +127,21 @@ async fn map_locations(conn: &mut SqliteConnection, brand_id: i64) -> SResult<()
     Ok(())
 }
 
-/// Baseline items with no ledger history from what the channels report. When several channels
+/// Baseline item × warehouse pairs with no ledger history from what the channels report. When several channels
 /// report the same item at the same warehouse they mirror one physical stock, so take the max.
 async fn baseline(
     conn: &mut SqliteConnection,
     brand_id: i64,
     channel: Option<i64>,
     actor: &str,
-) -> SResult<i64> {
+) -> SResult<Vec<(i64, i64)>> {
     let rows: Vec<(i64, i64, i64)> = sqlx::query_as(
         "SELECT item_id, warehouse_id, MAX(qty) FROM (
            SELECT l.item_id, lo.warehouse_id, l.channel_id, SUM(ls.quantity) AS qty
            FROM listing_stock ls JOIN listings l ON l.id = ls.listing_id
            JOIN locations lo ON lo.id = ls.location_id JOIN channels c ON c.id = l.channel_id
            WHERE c.brand_id = ?1 AND (?2 IS NULL OR c.id = ?2) AND l.item_id IS NOT NULL AND lo.warehouse_id IS NOT NULL
-             AND NOT EXISTS (SELECT 1 FROM stock_ledger s WHERE s.item_id = l.item_id)
+             AND NOT EXISTS (SELECT 1 FROM stock_ledger s WHERE s.item_id = l.item_id AND s.warehouse_id = lo.warehouse_id)
            GROUP BY l.item_id, lo.warehouse_id, l.channel_id)
          GROUP BY item_id, warehouse_id",
     )
@@ -149,7 +149,7 @@ async fn baseline(
     .bind(channel)
     .fetch_all(&mut *conn)
     .await?;
-    let mut n = 0;
+    let mut pairs = Vec::new();
     for (item, wh, qty) in rows {
         entry(
             conn,
@@ -162,9 +162,9 @@ async fn baseline(
             Some("baseline from channel stock"),
         )
         .await?;
-        n += 1;
+        pairs.push((item, wh));
     }
-    Ok(n)
+    Ok(pairs)
 }
 
 #[derive(FromRow)]
@@ -303,7 +303,7 @@ impl Service {
                     seeded += 1;
                 }
             }
-            seeded += baseline(&mut tx, brand_id, None, &who.name).await?;
+            seeded += baseline(&mut tx, brand_id, None, &who.name).await?.len() as i64;
             sqlx::query("UPDATE order_lines SET ledgered = 1 WHERE ledgered = 0 AND channel_id IN (SELECT id FROM channels WHERE brand_id = ?)")
                 .bind(brand_id)
                 .execute(&mut *tx)
@@ -348,7 +348,19 @@ impl Service {
         }
         let mut tx = self.pool.begin().await?;
         map_locations(&mut tx, brand_id).await?;
-        baseline(&mut tx, brand_id, Some(channel_id), "system").await?;
+        // A fresh baseline already reflects this channel's unledgered sales at its sales warehouse.
+        for (item, wh) in baseline(&mut tx, brand_id, Some(channel_id), "system").await? {
+            sqlx::query(
+                "UPDATE order_lines SET ledgered = 1 WHERE channel_id = ?1 AND ledgered = 0
+                   AND listing_id IN (SELECT id FROM listings WHERE item_id = ?2)
+                   AND ?3 = (SELECT warehouse_id FROM locations WHERE channel_id = ?1 AND warehouse_id IS NOT NULL ORDER BY id LIMIT 1)",
+            )
+            .bind(channel_id)
+            .bind(item)
+            .bind(wh)
+            .execute(&mut *tx)
+            .await?;
+        }
         // Orders placed before master mode began are history, not stock movements.
         sqlx::query("UPDATE order_lines SET ledgered = 1 WHERE channel_id = ? AND ledgered = 0 AND ordered_at < ?")
             .bind(channel_id)
@@ -626,6 +638,9 @@ impl Service {
             "stock_adjustment" if mode == "master" => {
                 anyhow::bail!("brand is now in master mode; re-propose against a warehouse")
             }
+            "ledger_adjustment" | "stock_transfer" if mode != "master" => {
+                anyhow::bail!("brand is back in mirror mode; re-propose against a channel")
+            }
             "ledger_adjustment" => {
                 let wh = p.after["warehouse_id"]
                     .as_i64()
@@ -673,8 +688,17 @@ impl Service {
             _ => return Ok(false),
         }
         tx.commit().await?;
-        if mode == "master" {
-            self.push_stock(brand_id, Some(item), None).await?;
+        let r = self.push_stock(brand_id, Some(item), None).await?;
+        if !r.push_errors.is_empty() {
+            // The ledger is the truth and the next sync retries; surface the gap on the proposal.
+            sqlx::query("UPDATE proposals SET error = ? WHERE id = ?")
+                .bind(format!(
+                    "applied to the ledger, but these channels were not updated yet: {}",
+                    r.push_errors.join("; ")
+                ))
+                .bind(p.id)
+                .execute(&self.pool)
+                .await?;
         }
         Ok(true)
     }

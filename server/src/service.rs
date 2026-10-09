@@ -1192,9 +1192,10 @@ impl Service {
         rationale: Option<&str>,
     ) -> SResult<ProposalView> {
         let dupe: Option<(i64,)> = sqlx::query_as(
-            "SELECT id FROM proposals WHERE status = 'pending' AND kind = ? AND listing_id IS ? AND after_json = ?",
+            "SELECT id FROM proposals WHERE status = 'pending' AND kind = ? AND item_id = ? AND listing_id IS ? AND after_json = ?",
         )
         .bind(kind)
+        .bind(item_id)
         .bind(listing_id)
         .bind(after.to_string())
         .fetch_optional(&self.pool)
