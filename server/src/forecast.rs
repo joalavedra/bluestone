@@ -6,6 +6,7 @@
 /// z-score for a 95% cycle service level.
 pub const SERVICE_Z: f64 = 1.65;
 const INTERMITTENT_ADI: f64 = 1.32;
+const MIN_WINDOW: usize = 28;
 const GRID: [f64; 5] = [0.1, 0.2, 0.3, 0.4, 0.5];
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -50,7 +51,8 @@ fn tsb(y: &[f64], a: f64, b: f64) -> (f64, f64) {
 }
 
 /// Forecast from a daily series (oldest first). Days before the first sale are ignored so new
-/// products are not dragged down by their pre-launch zeros.
+/// products are not dragged down by their pre-launch zeros, but at least the last 28 days are
+/// always kept so one recent sale of a slow seller is not read as a daily rate.
 pub fn forecast(daily: &[f64]) -> Forecast {
     let Some(first) = daily.iter().position(|v| *v > 0.0) else {
         return Forecast {
@@ -59,7 +61,7 @@ pub fn forecast(daily: &[f64]) -> Forecast {
             sigma: 0.0,
         };
     };
-    let y = &daily[first..];
+    let y = &daily[first.min(daily.len().saturating_sub(MIN_WINDOW))..];
     let demand_days = y.iter().filter(|v| **v > 0.0).count();
     let adi = y.len() as f64 / demand_days as f64;
     let (rate, sse, method) = if adi > INTERMITTENT_ADI {
@@ -84,7 +86,10 @@ pub fn forecast(daily: &[f64]) -> Forecast {
 
 /// Units to hold beyond expected lead-time demand.
 pub fn safety_stock(f: &Forecast, lead_time_days: i64) -> i64 {
-    (SERVICE_Z * f.sigma * (lead_time_days.max(1) as f64).sqrt()).ceil() as i64
+    if lead_time_days <= 0 {
+        return 0;
+    }
+    (SERVICE_Z * f.sigma * (lead_time_days as f64).sqrt()).ceil() as i64
 }
 
 /// Reorder when on-hand drops to expected lead-time demand plus safety stock.
@@ -128,8 +133,14 @@ mod tests {
     #[test]
     fn no_sales_and_new_products() {
         assert_eq!(forecast(&[0.0; 90]).method, "none");
-        let mut y = vec![0.0; 80];
-        y.extend([3.0; 10]);
+        let mut y = vec![0.0; 60];
+        y.extend([3.0; 30]);
         assert!((forecast(&y).rate - 3.0).abs() < 1e-9);
+        // One sale today after 89 quiet days is not a 10/day seller.
+        let mut y = vec![0.0; 89];
+        y.push(10.0);
+        let f = forecast(&y);
+        assert!(f.rate < 2.0 && reorder_point(&f, 14) < 40, "{f:?}");
+        assert_eq!(safety_stock(&f, 0), 0);
     }
 }
