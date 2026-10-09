@@ -53,6 +53,9 @@ export interface ItemSummary {
   price: number | null
   image_url: string | null
   status: Status
+  forecast_method: "ses" | "tsb" | "none"
+  safety_stock: number
+  forecast_reorder_point: number
 }
 
 export interface ChannelInfo {

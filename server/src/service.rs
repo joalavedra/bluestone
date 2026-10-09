@@ -98,6 +98,11 @@ pub struct ItemSummary {
     pub image_url: Option<String>,
     /// `out`, `low` or `ok`.
     pub status: String,
+    /// `ses` (regular seller), `tsb` (intermittent) or `none`; drives `daily_velocity`.
+    pub forecast_method: String,
+    pub safety_stock: i64,
+    /// Lead-time demand + safety stock; used when no manual `reorder_point` is set.
+    pub forecast_reorder_point: i64,
 }
 
 #[derive(FromRow)]
@@ -118,6 +123,29 @@ struct ItemRow {
     channels: Option<String>,
     image_url: Option<String>,
     price: Option<f64>,
+    sales_90d: Option<String>,
+}
+
+/// Daily units for the last 90 days (oldest first) from `day:qty` pairs.
+fn daily_series(raw: Option<&str>) -> Vec<f64> {
+    let today = chrono::Utc::now().date_naive();
+    let mut y = vec![0.0; 90];
+    for (day, qty) in raw
+        .unwrap_or_default()
+        .split(',')
+        .filter_map(|p| p.split_once(':'))
+    {
+        if let (Ok(d), Ok(q)) = (
+            chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d"),
+            qty.parse::<f64>(),
+        ) {
+            let ago = (today - d).num_days();
+            if (0..90).contains(&ago) {
+                y[89 - ago as usize] += q;
+            }
+        }
+    }
+    y
 }
 
 impl From<ItemRow> for ItemSummary {
@@ -126,11 +154,16 @@ impl From<ItemRow> for ItemSummary {
             .lead_time_days
             .or(r.supplier_lead)
             .unwrap_or(DEFAULT_LEAD_TIME_DAYS);
-        let velocity = r.sold_30d as f64 / VELOCITY_WINDOW_DAYS as f64;
+        let fc = crate::forecast::forecast(&daily_series(r.sales_90d.as_deref()));
+        let velocity = fc.rate;
+        let safety = crate::forecast::safety_stock(&fc, lead);
+        let forecast_rop = crate::forecast::reorder_point(&fc, lead);
         let days_cover =
             (velocity > 0.0).then(|| (r.on_hand as f64 / velocity * 10.0).round() / 10.0);
-        let low = r.reorder_point.map(|rp| r.on_hand <= rp).unwrap_or(false)
-            || days_cover.is_some_and(|d| d < lead as f64);
+        let low = match r.reorder_point {
+            Some(rp) => r.on_hand <= rp,
+            None => velocity > 0.0 && r.on_hand <= forecast_rop,
+        };
         let status = if r.on_hand <= 0 {
             "out"
         } else if low {
@@ -141,7 +174,8 @@ impl From<ItemRow> for ItemSummary {
         let suggested = match r.target_stock {
             Some(t) => (t - r.on_hand).max(0),
             None if status != "ok" => {
-                ((velocity * (lead + VELOCITY_WINDOW_DAYS) as f64).ceil() as i64 - r.on_hand)
+                ((velocity * (lead + VELOCITY_WINDOW_DAYS) as f64).ceil() as i64 + safety
+                    - r.on_hand)
                     .max(r.reorder_point.unwrap_or(0) - r.on_hand)
                     .max(0)
             }
@@ -178,6 +212,9 @@ impl From<ItemRow> for ItemSummary {
             price: r.price,
             image_url: r.image_url,
             status: status.into(),
+            forecast_method: fc.method.into(),
+            safety_stock: safety,
+            forecast_reorder_point: forecast_rop,
         }
     }
 }
@@ -190,7 +227,9 @@ SELECT i.id, b.name AS brand, i.sku, i.name, s.name AS supplier, s.lead_time_day
   (SELECT GROUP_CONCAT(t.name) FROM item_tags it JOIN tags t ON t.id = it.tag_id WHERE it.item_id = i.id) AS tags,
   (SELECT GROUP_CONCAT(c.kind || ':' || c.name) FROM listings l JOIN channels c ON c.id = l.channel_id WHERE l.item_id = i.id) AS channels,
   (SELECT l.image_url FROM listings l WHERE l.item_id = i.id AND l.image_url IS NOT NULL LIMIT 1) AS image_url,
-  (SELECT MIN(l.price) FROM listings l WHERE l.item_id = i.id) AS price
+  (SELECT MIN(l.price) FROM listings l WHERE l.item_id = i.id) AS price,
+  (SELECT GROUP_CONCAT(substr(o.ordered_at, 1, 10) || ':' || o.quantity) FROM order_lines o JOIN listings l ON l.id = o.listing_id
+     WHERE l.item_id = i.id AND o.ordered_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-90 days')) AS sales_90d
 FROM items i JOIN brands b ON b.id = i.brand_id LEFT JOIN suppliers s ON s.id = i.supplier_id
 WHERE i.archived = 0"#;
 
