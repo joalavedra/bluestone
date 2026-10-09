@@ -1,0 +1,28 @@
+# Local PrestaShop 8.2 dev shop (with demo products) for Bluestone's PrestaShop connector.
+# Usage: docker compose -f dev/docker-compose.yml up -d   → shop at http://localhost:8080, admin at /admin-dev
+# Then enable the WebService + create a key: dev/prestashop-key.sh
+services:
+  mariadb:
+    image: mirror.gcr.io/library/mariadb:10.11
+    environment:
+      MYSQL_ROOT_PASSWORD: prestashop
+      MYSQL_DATABASE: prestashop
+    volumes: [ps-db:/var/lib/mysql]
+  prestashop:
+    image: mirror.gcr.io/prestashop/prestashop:8.2-apache
+    depends_on: [mariadb]
+    ports: ["8080:80"]
+    environment:
+      DB_SERVER: mariadb
+      DB_NAME: prestashop
+      DB_USER: root
+      DB_PASSWD: prestashop
+      PS_INSTALL_AUTO: "1"
+      PS_DOMAIN: localhost:8080
+      PS_FOLDER_ADMIN: admin-dev
+      PS_FOLDER_INSTALL: install-dev
+      PS_DEV_MODE: "0"
+      ADMIN_MAIL: demo@bluestone.dev
+      ADMIN_PASSWD: bluestone-dev
+volumes:
+  ps-db:
