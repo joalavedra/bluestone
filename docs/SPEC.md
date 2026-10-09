@@ -60,10 +60,10 @@ Items are matched across channels by SKU at sync time (same brand, same SKU → 
 
 Brands selling the same physical stock on several channels double-count in mirror mode. Switching a brand to `master` (human-only, `POST /api/brands/:id/stock-mode`) fixes that:
 
-1. Channel locations are mapped to warehouses by name, and each item × warehouse gets an `initial` ledger entry from current channel stock (the **max** across channels, not the sum). Orders placed before the switch are history and never hit the ledger.
+1. Every channel of the brand is synced first (the switch is refused if one fails, so the baseline includes the latest sales). Channel locations are then mapped to warehouses by name, and each item × warehouse gets an `initial` ledger entry from current channel stock (the **max** across channels, not the sum). Orders placed before the switch are history and never hit the ledger.
 2. Every sync ledgers new order lines as `sale` entries (at the channel's first warehouse), then pushes `max(ledger, 0)` to every channel location. A synced channel showing anything else is **drift**: logged and overwritten. A ledger below zero is **oversold**: logged.
 3. Agent stock proposals target a warehouse (`ledger_adjustment`, compare-and-set against the ledger) or move stock (`stock_transfer`); on approval the ledger records them and pushes to every channel.
-4. Switching back to `mirror` keeps the ledger as history; re-entering master re-baselines from the stores with `correction` entries.
+4. Switching back to `mirror` keeps the ledger as history; re-entering master re-baselines from the stores with `correction` entries. Merging two master items keeps the larger quantity per warehouse (they are assumed to be the same physical stock).
 
 ## Auth & scopes
 

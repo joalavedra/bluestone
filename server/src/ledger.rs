@@ -249,6 +249,38 @@ impl Service {
         brand: &str,
         mode: &str,
     ) -> SResult<Option<Reconcile>> {
+        // Sync first so the master baseline includes sales made since the last sync.
+        if mode == "master" {
+            who.require(Scope::Admin)?;
+            if who.kind != "human" && who.kind != "system" {
+                return Err(ServiceError::Forbidden(
+                    "only human tokens can change stock mode".into(),
+                ));
+            }
+            let channels: Vec<(i64, String)> = sqlx::query_as(
+                "SELECT c.id, c.name FROM channels c JOIN brands b ON b.id = c.brand_id
+                 WHERE CAST(b.id AS TEXT) = ?1 OR b.name = ?1 COLLATE NOCASE",
+            )
+            .bind(brand.trim())
+            .fetch_all(&self.pool)
+            .await?;
+            for (id, name) in channels {
+                if let Err(e) = self.sync_channel(who, id).await {
+                    return Err(ServiceError::Conflict(format!(
+                        "sync of {name} failed, so the stock baseline would be stale; fix it and retry: {e}"
+                    )));
+                }
+            }
+        }
+        self.switch_stock_mode(who, brand, mode).await
+    }
+
+    pub(crate) async fn switch_stock_mode(
+        &self,
+        who: &Principal,
+        brand: &str,
+        mode: &str,
+    ) -> SResult<Option<Reconcile>> {
         who.require(Scope::Admin)?;
         if who.kind != "human" && who.kind != "system" {
             return Err(ServiceError::Forbidden(
@@ -704,6 +736,51 @@ impl Service {
     }
 }
 
+/// Merging two items that are the same physical stock: keep the larger quantity per warehouse.
+pub(crate) async fn merge_ledgers(
+    conn: &mut SqliteConnection,
+    source: i64,
+    target: i64,
+    actor: &str,
+) -> SResult<()> {
+    let whs: Vec<(i64,)> =
+        sqlx::query_as("SELECT DISTINCT warehouse_id FROM stock_ledger WHERE item_id = ?")
+            .bind(source)
+            .fetch_all(&mut *conn)
+            .await?;
+    for (wh,) in whs {
+        let src = level(conn, source, wh).await?;
+        let tgt = level(conn, target, wh).await?;
+        if src != 0 {
+            entry(
+                conn,
+                source,
+                wh,
+                -src,
+                "correction",
+                Some(("item", target)),
+                actor,
+                Some("merged into another item"),
+            )
+            .await?;
+        }
+        if src > tgt {
+            entry(
+                conn,
+                target,
+                wh,
+                src - tgt,
+                "correction",
+                Some(("item", source)),
+                actor,
+                Some("merge: kept the larger quantity"),
+            )
+            .await?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -737,7 +814,7 @@ mod tests {
     async fn master_mode_baselines_ledgers_sales_and_flags_oversell() {
         let s = svc().await;
         let me = Principal::system();
-        s.set_stock_mode(&me, "B", "master").await.unwrap();
+        s.switch_stock_mode(&me, "B", "master").await.unwrap();
         // Shared "Main" warehouse takes the max of the two channels, not the sum; history is not deducted.
         assert_eq!(
             levels(&s.stock_levels(1).await.unwrap()),
@@ -760,10 +837,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn merging_items_keeps_the_larger_quantity() {
+        let s = svc().await;
+        let me = Principal::system();
+        for sql in [
+            "INSERT INTO items (id, brand_id, sku, name) VALUES (2, 1, 'A2', 'Alpha dup')",
+            "INSERT INTO listings (id, channel_id, item_id, external_product_id, title) VALUES (3, 2, 2, 'p3', 'Alpha dup')",
+            "INSERT INTO listing_stock (listing_id, location_id, quantity) VALUES (3, 2, 12)",
+        ] {
+            sqlx::query(sql).execute(&s.pool).await.unwrap();
+        }
+        s.switch_stock_mode(&me, "B", "master").await.unwrap();
+        s.merge_items(&me, 2, 1).await.unwrap();
+        assert_eq!(
+            levels(&s.stock_levels(1).await.unwrap()),
+            vec![("Main".into(), 12), ("Overflow".into(), 4)]
+        );
+        assert!(
+            s.stock_levels(2)
+                .await
+                .unwrap()
+                .iter()
+                .all(|l| l.quantity == 0)
+        );
+    }
+
+    #[tokio::test]
+    async fn activation_refuses_when_a_channel_cannot_sync() {
+        let s = svc().await;
+        assert!(
+            s.set_stock_mode(&Principal::system(), "B", "master")
+                .await
+                .is_err()
+        );
+        assert_eq!(s.item_stock_mode(1).await.unwrap(), "mirror");
+    }
+
+    #[tokio::test]
     async fn transfers_and_adjustments_go_through_the_ledger() {
         let s = svc().await;
         let me = Principal::system();
-        s.set_stock_mode(&me, "B", "master").await.unwrap();
+        s.switch_stock_mode(&me, "B", "master").await.unwrap();
         let t = s
             .propose_transfer(
                 &me,

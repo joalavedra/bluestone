@@ -1119,7 +1119,11 @@ impl Service {
         if sb != tb {
             return invalid("can only merge items of the same brand");
         }
+        let master = self.item_stock_mode(target).await? == "master";
         let mut tx = self.pool.begin().await?;
+        if master {
+            crate::ledger::merge_ledgers(&mut tx, source, target, &who.name).await?;
+        }
         sqlx::query("UPDATE listings SET item_id = ? WHERE item_id = ?")
             .bind(target)
             .bind(source)
@@ -1136,6 +1140,9 @@ impl Service {
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;
+        if master {
+            self.push_stock(sb.0, Some(target), None).await?;
+        }
         let (s, t) = (
             self.item_label(source).await?,
             self.item_label(target).await?,
