@@ -37,7 +37,8 @@ Why: brands selling on both platforms double-count or oversell; one master quant
 
 ## Phase 3 — More channels & finance
 
-- Amazon, Faire, TikTok Shop, WooCommerce.
+- ✅ Faire (wholesale).
+- Amazon, TikTok Shop, WooCommerce.
 - Cost import from QuickBooks / Holded; margin and stock value at cost.
 - Multi-user orgs, SSO, hosted offering.
 

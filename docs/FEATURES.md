@@ -68,6 +68,7 @@ Status: ✅ in v0 · 🟡 partial · 🔜 planned (see ROADMAP.md) · ✖ out of
 |---|---|---|---|
 | Shopify | ✔ | Admin GraphQL 2025-07, custom-app token | ✅ |
 | PrestaShop | – | Legacy WebService (1.7–9) | ✅ |
-| Amazon, Faire, TikTok Shop | ✔ | – | 🔜 phase 3 |
+| Faire (wholesale) | ✔ | External API v2: products/variants, on-hand inventory, wholesale price, orders | ✅ |
+| Amazon, TikTok Shop | ✔ | – | 🔜 phase 3 |
 | QuickBooks / Holded (costs) | ✔ | Unit cost import | 🔜 phase 3 |
 | Webhooks (real-time) | ✔ | Shopify `inventory_levels/update`, `orders/create` | 🔜 phase 1 |

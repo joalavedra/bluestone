@@ -1497,8 +1497,8 @@ impl Service {
 
     pub async fn add_channel(&self, who: &Principal, c: &NewChannel) -> SResult<i64> {
         who.require(Scope::Admin)?;
-        if c.kind != "shopify" && c.kind != "prestashop" {
-            return invalid("kind must be shopify or prestashop");
+        if !["shopify", "prestashop", "faire"].contains(&c.kind.as_str()) {
+            return invalid("kind must be shopify, prestashop or faire");
         }
         sqlx::query("INSERT OR IGNORE INTO brands (name) VALUES (?)")
             .bind(c.brand.trim())

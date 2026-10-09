@@ -1,3 +1,4 @@
+pub mod faire;
 pub mod prestashop;
 pub mod shopify;
 
@@ -77,6 +78,7 @@ pub trait Connector: Send + Sync {
 pub fn build(kind: &str, base_url: &str, credential: String) -> Result<Box<dyn Connector>> {
     match kind {
         "shopify" => Ok(Box::new(shopify::Shopify::new(base_url, credential))),
+        "faire" => Ok(Box::new(faire::Faire::new(base_url, credential)?)),
         "prestashop" => Ok(Box::new(prestashop::PrestaShop::new(base_url, credential))),
         other => anyhow::bail!("unknown channel kind `{other}`"),
     }

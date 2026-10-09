@@ -27,10 +27,14 @@ export function ChannelBadge({ channel }: { channel: string }) {
       variant="outline"
       className={cn(
         "gap-1 font-normal",
-        kind === "shopify" ? "border-emerald-200 bg-emerald-50/60 text-emerald-800" : "border-pink-200 bg-pink-50/60 text-pink-800",
+        kind === "shopify"
+          ? "border-emerald-200 bg-emerald-50/60 text-emerald-800"
+          : kind === "faire"
+            ? "border-amber-200 bg-amber-50/60 text-amber-800"
+            : "border-pink-200 bg-pink-50/60 text-pink-800",
       )}
     >
-      <span className={cn("size-1.5 rounded-full", kind === "shopify" ? "bg-emerald-500" : "bg-pink-500")} />
+      <span className={cn("size-1.5 rounded-full", kind === "shopify" ? "bg-emerald-500" : kind === "faire" ? "bg-amber-500" : "bg-pink-500")} />
       {name}
     </Badge>
   )

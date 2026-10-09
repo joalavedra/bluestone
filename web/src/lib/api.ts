@@ -57,7 +57,7 @@ export interface ItemSummary {
 
 export interface ChannelInfo {
   id: number
-  kind: "shopify" | "prestashop"
+  kind: "shopify" | "prestashop" | "faire"
   name: string
   base_url: string
   last_synced_at: string | null

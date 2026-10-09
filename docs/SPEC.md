@@ -29,7 +29,7 @@ PrestaShop (WebService, 1.7–9) ──┘   (sync)      (hub)   └─ /api  RE
 | Table | Purpose |
 |---|---|
 | `brands` | A brand you manage (e.g. "Northwind Coffee"). |
-| `channels` | A store of a brand: `kind` (`shopify`/`prestashop`), `base_url`, `credential_env`, sync status. |
+| `channels` | A store of a brand: `kind` (`shopify`/`prestashop`/`faire`), `base_url`, `credential_env`, sync status. |
 | `locations` | Stock locations per channel (Shopify locations; PrestaShop has one, `default`). |
 | `items` | Bluestone's own unit, unique per `(brand, sku)`. Holds organisation fields: supplier, reorder point, target stock, lead time, unit cost. |
 | `listings` | A product/variant on one channel, linked to an item. Mirrors title, price, status, image. |
@@ -89,6 +89,8 @@ All under `/api`, bearer auth. `GET /me`, `GET /overview`, `GET /brands`, `GET /
 ## Connectors
 
 **Shopify** — Admin GraphQL `2025-07`, header `X-Shopify-Access-Token` (custom-app token). Reads `locations`, `products → variants → inventoryItem.inventoryLevels(available)`, `orders(created_at ≥ 90d) → lineItems`. Writes: `inventorySetQuantities` (with `compareQuantity` = the proposal's *before*, so a stale proposal fails instead of clobbering), `productVariantsBulkUpdate` (price), `productUpdate` (status). Required scopes: `read_products, write_products, read_inventory, write_inventory, read_locations, read_orders`.
+
+**Faire** — External API v2 (`/external-api/v2`), OAuth headers `X-FAIRE-APP-CREDENTIALS` + `X-FAIRE-OAUTH-ACCESS-TOKEN`; the channel's env var holds `<base64 app credentials>:<access token>`. Reads `products` (cursor-paged; deleted products/variants skipped), on-hand stock via `product-inventory/by-product-variant-ids` (untracked variants have no stock row), `orders(created_at_min, excluding CANCELED)` and their non-canceled items. One synthetic location, `Faire stock`. Bluestone's price for a Faire listing is the **wholesale** price. Writes: on-hand inventory (no native compare-and-set, so the current value is re-read first and a moved value fails the proposal), wholesale price in the variant's primary currency (retail and other currencies untouched), product `lifecycle_state` (`active` → `PUBLISHED`, `draft`/`archived` → `UNPUBLISHED`; never deleted). Local mock: `server/target/debug/mock_faire` (port 8789).
 
 **PrestaShop** — legacy WebService (`/api`, HTTP basic auth with the key), JSON output. Reads `products`, `combinations`, `stock_availables`, `orders`, `order_details`. Writes GET the resource XML, strip read-only fields, patch and PUT (`stock_availables.quantity`, `products.price` / `combinations.price` impact, `products.active`). Key needs GET/PUT on those resources.
 
