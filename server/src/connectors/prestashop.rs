@@ -98,8 +98,10 @@ impl PrestaShop {
 /// Fields the WebService returns but rejects on PUT.
 const READ_ONLY_FIELDS: &[&str] = &[
     "manufacturer_name",
-    "quantity_discount_x",
+    "quantity",
     "position_in_category",
+    // PS 8 fails the whole PUT with error 85 when the (usually empty) bundle association is echoed back.
+    "product_bundle",
 ];
 
 fn truncate(s: &str, n: usize) -> &str {
