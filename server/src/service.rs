@@ -1324,13 +1324,18 @@ impl Service {
                 p.status
             )));
         }
-        sqlx::query("UPDATE proposals SET status = 'rejected', decided_by = ?, decided_at = ?, error = ? WHERE id = ?")
+        let claimed = sqlx::query("UPDATE proposals SET status = 'rejected', decided_by = ?, decided_at = ?, error = ? WHERE id = ? AND status = 'pending'")
             .bind(&who.name)
             .bind(now())
             .bind(reason)
             .bind(id)
             .execute(&self.pool)
             .await?;
+        if claimed.rows_affected() == 0 {
+            return Err(ServiceError::Conflict(format!(
+                "proposal #{id} was decided concurrently"
+            )));
+        }
         self.log(
             who,
             "reject",
@@ -1348,6 +1353,11 @@ impl Service {
     /// Push an approved proposal to its channel and mirror the result locally.
     pub async fn approve(&self, who: &Principal, id: i64) -> SResult<ProposalView> {
         who.require(Scope::Approve)?;
+        if who.kind != "human" && who.kind != "system" {
+            return Err(ServiceError::Forbidden(
+                "only human tokens can approve proposals".into(),
+            ));
+        }
         let p = self.get_proposal(id).await?;
         if p.status != "pending" {
             return Err(ServiceError::Conflict(format!(
@@ -1460,11 +1470,15 @@ impl Service {
                 } else {
                     status
                 };
-                sqlx::query("UPDATE listings SET status = ? WHERE id = ?")
-                    .bind(local)
-                    .bind(p.listing_id)
-                    .execute(&self.pool)
-                    .await?;
+                // Status is product-level upstream, so every variant listing of the product changes.
+                sqlx::query(
+                    "UPDATE listings SET status = ? WHERE (channel_id, external_product_id) =
+                       (SELECT channel_id, external_product_id FROM listings WHERE id = ?)",
+                )
+                .bind(local)
+                .bind(p.listing_id)
+                .execute(&self.pool)
+                .await?;
             }
             other => anyhow::bail!("unknown proposal kind {other}"),
         }
@@ -1494,6 +1508,22 @@ impl Service {
             .bind(c.brand.trim())
             .fetch_one(&self.pool)
             .await?;
+        let existing: Option<(String, String, i64)> = sqlx::query_as(
+            "SELECT c.kind, c.base_url, (SELECT COUNT(*) FROM listings l WHERE l.channel_id = c.id)
+             FROM channels c WHERE c.brand_id = ? AND c.name = ?",
+        )
+        .bind(brand_id)
+        .bind(c.name.trim())
+        .fetch_optional(&self.pool)
+        .await?;
+        if let Some((kind, url, listings)) = existing
+            && listings > 0
+            && (kind != c.kind || url != c.base_url.trim())
+        {
+            return invalid(
+                "channel already has listings from another store; use a new channel name",
+            );
+        }
         let (id,): (i64,) = sqlx::query_as(
             "INSERT INTO channels (brand_id, kind, name, base_url, credential_env) VALUES (?, ?, ?, ?, ?)
              ON CONFLICT (brand_id, name) DO UPDATE SET kind = excluded.kind, base_url = excluded.base_url, credential_env = excluded.credential_env
@@ -1693,6 +1723,21 @@ impl Service {
             .execute(&mut *tx)
             .await?;
         }
+        // Anything not returned by this sync is gone upstream: drop its stock so totals stay honest.
+        sqlx::query(
+            "DELETE FROM listing_stock WHERE updated_at <> ? AND listing_id IN (SELECT id FROM listings WHERE channel_id = ?)",
+        )
+        .bind(&ts)
+        .bind(channel_id)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "UPDATE listings SET status = 'removed' WHERE channel_id = ? AND synced_at <> ?",
+        )
+        .bind(channel_id)
+        .bind(&ts)
+        .execute(&mut *tx)
+        .await?;
         for o in &orders {
             let listing =
                 listing_ids.get(&(o.external_product_id.clone(), o.external_variant_id.clone()));

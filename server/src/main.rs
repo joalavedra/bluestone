@@ -9,7 +9,7 @@ use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
 };
 use std::sync::Arc;
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 
 #[derive(Parser)]
 #[command(
@@ -225,7 +225,7 @@ async fn serve(
         .nest("/api", api::router(svc.clone()))
         .route_service("/mcp", mcp)
         .layer(axum::middleware::from_fn_with_state(svc.clone(), mcp_auth))
-        .layer(CorsLayer::permissive());
+        .layer(cors_layer());
 
     if sync_every > 0 {
         let svc = svc.clone();
@@ -256,4 +256,17 @@ async fn mcp_auth(
         return next.run(req).await;
     }
     api::require_token(axum::extract::State(svc), req, next).await
+}
+
+/// CORS is off unless `BLUESTONE_CORS_ORIGINS` lists allowed origins (the dev UI proxies `/api`, so it needs none).
+fn cors_layer() -> CorsLayer {
+    let origins: Vec<http::HeaderValue> = std::env::var("BLUESTONE_CORS_ORIGINS")
+        .unwrap_or_default()
+        .split(',')
+        .filter_map(|o| o.trim().parse().ok())
+        .collect();
+    CorsLayer::new()
+        .allow_origin(AllowOrigin::list(origins))
+        .allow_methods(Any)
+        .allow_headers(Any)
 }

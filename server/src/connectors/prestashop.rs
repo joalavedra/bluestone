@@ -24,7 +24,7 @@ impl PrestaShop {
 
     async fn get_json(&self, resource: &str, display: &str) -> Result<Vec<Value>> {
         let url = format!("{}/api/{resource}", self.base);
-        let resp: Value = self
+        let resp = self
             .http
             .get(&url)
             .basic_auth(&self.key, Some(""))
@@ -37,10 +37,14 @@ impl PrestaShop {
             .await
             .with_context(|| format!("prestashop GET {resource} failed"))?
             .error_for_status()?
-            .json()
-            .await
-            // Empty collections come back as `[]` rather than an object.
-            .unwrap_or(Value::Null);
+            .text()
+            .await?;
+        // Empty collections come back as `[]` rather than an object.
+        if resp.trim().is_empty() || resp.trim() == "[]" {
+            return Ok(Vec::new());
+        }
+        let resp: Value = serde_json::from_str(&resp)
+            .with_context(|| format!("prestashop GET {resource} returned invalid JSON"))?;
         Ok(resp
             .get(resource)
             .and_then(Value::as_array)
@@ -84,8 +88,10 @@ impl PrestaShop {
 
     async fn patch(&self, resource: &str, id: &str, fields: &[(&str, String)]) -> Result<()> {
         let mut xml = self.get_xml(resource, id).await?;
-        for tag in READ_ONLY_FIELDS {
-            xml = remove_tag(&xml, tag);
+        if resource != "stock_availables" {
+            for tag in READ_ONLY_FIELDS {
+                xml = remove_tag(&xml, tag);
+            }
         }
         for (tag, value) in fields {
             xml = replace_tag(&xml, tag, value)
@@ -95,7 +101,7 @@ impl PrestaShop {
     }
 }
 
-/// Fields the WebService returns but rejects on PUT.
+/// Product/combination fields the WebService returns but rejects on PUT.
 const READ_ONLY_FIELDS: &[&str] = &[
     "manufacturer_name",
     "quantity",
@@ -117,8 +123,9 @@ pub fn replace_tag(xml: &str, tag: &str, value: &str) -> Option<String> {
     let open_end = xml[start..].find('>')? + start;
     let attrs = xml[start + 1 + tag.len()..open_end].trim_end_matches('/');
     Some(format!(
-        "{}<{tag}{attrs}><![CDATA[{value}]]></{tag}>{}",
+        "{}<{tag}{attrs}><![CDATA[{}]]></{tag}>{}",
         &xml[..start],
+        value.replace("]]>", "]]]]><![CDATA[>"),
         &xml[end..]
     ))
 }
@@ -229,8 +236,9 @@ impl Connector for PrestaShop {
                 Some(cs) if !cs.is_empty() => {
                     for c in cs {
                         let cid = s(&c["id"]);
-                        let reference =
-                            non_empty(s(&c["reference"])).or_else(|| non_empty(s(&p["reference"])));
+                        let reference = non_empty(s(&c["reference"])).or_else(|| {
+                            non_empty(s(&p["reference"])).map(|r| format!("{r}-{cid}"))
+                        });
                         listings.push(RemoteListing {
                             external_product_id: pid.clone(),
                             external_variant_id: cid.clone(),
@@ -356,6 +364,12 @@ impl Connector for PrestaShop {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn escapes_cdata_terminator() {
+        let out = replace_tag("<a><price>1</price></a>", "price", "x]]>y").unwrap();
+        assert_eq!(out, "<a><price><![CDATA[x]]]]><![CDATA[>y]]></price></a>");
+    }
 
     #[test]
     fn patches_xml_fields() {
