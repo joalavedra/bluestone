@@ -7,11 +7,11 @@ BIN=target/debug
 WORK=$(mktemp -d)
 export BLUESTONE_DATABASE="sqlite://$WORK/smoke.db" FAIRE_DEV_CREDENTIAL="ZGV2OmRldg==:faire_dev_mock" MOCK_FAIRE_ADDR=127.0.0.1:18789
 $BIN/mock_faire & MOCK=$!
-$BIN/bluestone serve --addr 127.0.0.1:18790 & SRV=$!
-trap 'kill $MOCK $SRV 2>/dev/null; rm -rf "$WORK"' EXIT
-sleep 1
+trap 'kill $MOCK ${SRV:-} 2>/dev/null; rm -rf "$WORK"' EXIT
 HUMAN=$($BIN/bluestone token create --name joan --kind human --scopes admin 2>/dev/null)
 $BIN/bluestone channel add --brand "Northwind Coffee" --kind faire --name faire-wholesale --base-url http://127.0.0.1:18789 --credential-env FAIRE_DEV_CREDENTIAL >/dev/null
+$BIN/bluestone serve --addr 127.0.0.1:18790 & SRV=$!
+for _ in $(seq 50); do curl -s -o /dev/null http://127.0.0.1:18790/api/me && break; sleep 0.1; done
 API=http://127.0.0.1:18790/api
 H=(-sf -H "Authorization: Bearer $HUMAN" -H "Content-Type: application/json")
 FH=(-sf -H "X-FAIRE-APP-CREDENTIALS: ZGV2OmRldg==" -H "X-FAIRE-OAUTH-ACCESS-TOKEN: faire_dev_mock")

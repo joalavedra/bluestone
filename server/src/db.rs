@@ -30,27 +30,39 @@ async fn widen_channel_kinds(pool: &SqlitePool) -> Result<()> {
     }
     let mut conn = pool.acquire().await?;
     conn.execute("PRAGMA foreign_keys = OFF").await?;
-    let res = conn
-        .execute(
-            "BEGIN;
-             CREATE TABLE channels_new (
-               id INTEGER PRIMARY KEY,
-               brand_id INTEGER NOT NULL REFERENCES brands(id),
-               kind TEXT NOT NULL CHECK (kind IN ('shopify','prestashop','faire')),
-               name TEXT NOT NULL,
-               base_url TEXT NOT NULL,
-               credential_env TEXT NOT NULL,
-               last_synced_at TEXT,
-               last_sync_error TEXT,
-               created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
-               UNIQUE (brand_id, name)
-             );
-             INSERT INTO channels_new SELECT id, brand_id, kind, name, base_url, credential_env, last_synced_at, last_sync_error, created_at FROM channels;
-             DROP TABLE channels;
-             ALTER TABLE channels_new RENAME TO channels;
-             COMMIT;",
+    // Another process (CLI next to `serve`) may race us: take the write lock, then re-check.
+    let res = async {
+        conn.execute("BEGIN IMMEDIATE").await?;
+        let sql: String = sqlx::query(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'channels'",
         )
-        .await;
+        .fetch_one(&mut *conn)
+        .await?
+        .get(0);
+        if !sql.contains("'faire'") {
+            conn.execute(
+                "CREATE TABLE channels_new (
+                   id INTEGER PRIMARY KEY,
+                   brand_id INTEGER NOT NULL REFERENCES brands(id),
+                   kind TEXT NOT NULL CHECK (kind IN ('shopify','prestashop','faire')),
+                   name TEXT NOT NULL,
+                   base_url TEXT NOT NULL,
+                   credential_env TEXT NOT NULL,
+                   last_synced_at TEXT,
+                   last_sync_error TEXT,
+                   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+                   UNIQUE (brand_id, name)
+                 );
+                 INSERT INTO channels_new SELECT id, brand_id, kind, name, base_url, credential_env, last_synced_at, last_sync_error, created_at FROM channels;
+                 DROP TABLE channels;
+                 ALTER TABLE channels_new RENAME TO channels;",
+            )
+            .await?;
+        }
+        conn.execute("COMMIT").await?;
+        anyhow::Ok(())
+    }
+    .await;
     if res.is_err() {
         let _ = conn.execute("ROLLBACK").await;
     }
