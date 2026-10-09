@@ -14,6 +14,7 @@ use std::sync::Arc;
 const INSTRUCTIONS: &str = "Bluestone is the inventory hub for Joan's Shopify and PrestaShop brands. \
 Use read tools to inspect stock, velocity and days of cover. Organise tools (tags, suppliers, reorder settings, notes, merges) apply immediately. \
 Anything that would change a store (stock, price, listing status) must go through propose_* tools: it creates a proposal a human approves in the Bluestone UI. \
+Brands in master mode keep stock in Bluestone's ledger: stock proposals and transfers target a warehouse, and approved changes are pushed to every channel; use stock_ledger to see why stock moved. \
 Always include a short rationale in proposals. Items are addressed by id or SKU; pass `brand` if a SKU exists in several brands and `channel` if an item is listed on several channels.";
 
 #[derive(Clone)]
@@ -110,6 +111,20 @@ pub struct MergeArgs {
     pub source: String,
     /// Item that keeps all listings.
     pub target: String,
+    pub brand: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct LedgerArgs {
+    /// Item id or SKU.
+    pub item: String,
+    pub brand: Option<String>,
+    /// Most recent entries to return (default 50).
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct WarehousesArgs {
     pub brand: Option<String>,
 }
 
@@ -450,7 +465,58 @@ impl BluestoneMcp {
     }
 
     #[tool(
-        description = "Propose setting stock for an item on a channel/location, as an absolute `quantity` or a `delta`. Creates a pending proposal for human approval; nothing changes in the store until approved."
+        description = "Stock ledger for an item: quantity per warehouse and the latest entries (initial, sale, adjustment, transfer, receipt, correction) with who and why. Only brands in master mode have a ledger."
+    )]
+    async fn stock_ledger(
+        &self,
+        ctx: RequestContext<RoleServer>,
+        Parameters(a): Parameters<LedgerArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let p = self.principal(&ctx)?;
+        let r = async {
+            p.require(Scope::Read)?;
+            let id = self.svc.resolve_item(&a.item, a.brand.as_deref()).await?;
+            Ok(serde_json::json!({
+                "stock_mode": self.svc.item_stock_mode(id).await?,
+                "levels": self.svc.stock_levels(id).await?,
+                "entries": self.svc.ledger(id, a.limit.unwrap_or(50)).await?,
+            }))
+        }
+        .await;
+        done(r)
+    }
+
+    #[tool(
+        description = "List Bluestone warehouses (master-mode brands) with the channel locations they feed and total units."
+    )]
+    async fn list_warehouses(
+        &self,
+        ctx: RequestContext<RoleServer>,
+        Parameters(a): Parameters<WarehousesArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let p = self.principal(&ctx)?;
+        let r = async {
+            p.require(Scope::Read)?;
+            self.svc.warehouses(a.brand.as_deref()).await
+        }
+        .await;
+        done(r)
+    }
+
+    #[tool(
+        description = "Propose moving stock between two warehouses of a master-mode brand. Creates a pending proposal; on approval the ledger records both legs and channels are updated."
+    )]
+    async fn propose_stock_transfer(
+        &self,
+        ctx: RequestContext<RoleServer>,
+        Parameters(a): Parameters<crate::ledger::ProposeTransfer>,
+    ) -> Result<CallToolResult, McpError> {
+        let p = self.principal(&ctx)?;
+        done(self.svc.propose_transfer(&p, &a).await)
+    }
+
+    #[tool(
+        description = "Propose setting stock for an item, as an absolute `quantity` or a `delta`. Mirror brands: targets a channel/location and is written to that store on approval. Master brands: `location` is a Bluestone warehouse, the change lands in the ledger and is pushed to every channel. Nothing changes until a human approves."
     )]
     async fn propose_stock_adjustment(
         &self,

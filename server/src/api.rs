@@ -59,6 +59,9 @@ pub fn router(svc: AppState) -> Router {
         .route("/me", get(me))
         .route("/overview", get(overview))
         .route("/brands", get(brands))
+        .route("/brands/{id}/stock-mode", post(stock_mode))
+        .route("/warehouses", get(warehouses))
+        .route("/items/{id}/ledger", get(item_ledger))
         .route("/items", get(items))
         .route("/items/{id}", get(item).patch(update_item))
         .route("/items/{id}/tags", post(add_tags))
@@ -290,6 +293,7 @@ enum NewProposal {
     StockAdjustment(ProposeStock),
     PriceChange(ProposePrice),
     ListingStatus(ProposeStatus),
+    StockTransfer(crate::ledger::ProposeTransfer),
 }
 
 async fn create_proposal(
@@ -301,6 +305,7 @@ async fn create_proposal(
         NewProposal::StockAdjustment(x) => s.propose_stock(&p, &x).await?,
         NewProposal::PriceChange(x) => s.propose_price(&p, &x).await?,
         NewProposal::ListingStatus(x) => s.propose_status(&p, &x).await?,
+        NewProposal::StockTransfer(x) => s.propose_transfer(&p, &x).await?,
     }))
 }
 
@@ -393,4 +398,52 @@ async fn sync_all(
 ) -> R<Vec<SyncReport>> {
     p.require(Scope::Read)?;
     Ok(Json(s.sync_all(&p).await?))
+}
+
+#[derive(Deserialize)]
+struct WarehouseQuery {
+    brand: Option<String>,
+}
+
+async fn warehouses(
+    State(s): State<AppState>,
+    Extension(p): Extension<Principal>,
+    Query(q): Query<WarehouseQuery>,
+) -> R<Vec<crate::ledger::Warehouse>> {
+    p.require(Scope::Read)?;
+    Ok(Json(s.warehouses(q.brand.as_deref()).await?))
+}
+
+#[derive(Deserialize)]
+struct LedgerQuery {
+    limit: Option<i64>,
+}
+
+async fn item_ledger(
+    State(s): State<AppState>,
+    Extension(p): Extension<Principal>,
+    Path(id): Path<i64>,
+    Query(q): Query<LedgerQuery>,
+) -> R<Value> {
+    p.require(Scope::Read)?;
+    Ok(Json(json!({
+        "stock_mode": s.item_stock_mode(id).await?,
+        "levels": s.stock_levels(id).await?,
+        "entries": s.ledger(id, q.limit.unwrap_or(100)).await?,
+    })))
+}
+
+#[derive(Deserialize)]
+struct StockModeBody {
+    mode: String,
+}
+
+async fn stock_mode(
+    State(s): State<AppState>,
+    Extension(p): Extension<Principal>,
+    Path(id): Path<String>,
+    Json(b): Json<StockModeBody>,
+) -> R<Value> {
+    let reconcile = s.set_stock_mode(&p, &id, &b.mode).await?;
+    Ok(Json(json!({ "mode": b.mode, "reconcile": reconcile })))
 }
