@@ -33,7 +33,8 @@ Why: brands selling on both platforms double-count or oversell; one master quant
 - ✅ Per-brand master mode: append-only stock ledger, warehouses mapped from channel locations, ledger pushed to every channel after each change and sync, drift and oversell detection, warehouse transfers.
 - Reservations (`available = on hand − reserved`) once sales orders exist.
 - ✅ Receiving POs updates master stock (ledger `receipt` entries, pushed to channels).
-- Forecasting sidecar (Nixtla statsforecast) replacing 30-day velocity; seasonality, slow movers.
+- ✅ Native forecasting (SES / TSB after statsforecast) with safety stock and forecast reorder points, replacing 30-day velocity.
+- Weekly seasonality and promo-aware forecasts.
 - Bundles / kits.
 
 ## Phase 3 — More channels & finance
