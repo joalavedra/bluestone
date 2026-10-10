@@ -77,6 +77,12 @@ pub fn router(svc: AppState) -> Router {
         .route("/proposals/{id}", get(proposal))
         .route("/proposals/{id}/approve", post(approve))
         .route("/proposals/{id}/reject", post(reject))
+        .route("/purchase-orders", get(purchase_orders).post(draft_po))
+        .route("/purchase-orders/{id}", get(purchase_order))
+        .route("/purchase-orders/{id}/approve", post(approve_po))
+        .route("/purchase-orders/{id}/send", post(send_po))
+        .route("/purchase-orders/{id}/cancel", post(cancel_po))
+        .route("/purchase-orders/{id}/receive", post(receive_po))
         .route("/activity", get(activity))
         .route("/channels", get(channels).post(add_channel))
         .route("/channels/{id}/sync", post(sync_channel))
@@ -446,4 +452,71 @@ async fn stock_mode(
 ) -> R<Value> {
     let reconcile = s.set_stock_mode(&p, &id, &b.mode).await?;
     Ok(Json(json!({ "mode": b.mode, "reconcile": reconcile })))
+}
+
+#[derive(Deserialize)]
+struct PoQuery {
+    status: Option<String>,
+    brand: Option<String>,
+}
+
+async fn purchase_orders(
+    State(s): State<AppState>,
+    Extension(p): Extension<Principal>,
+    Query(q): Query<PoQuery>,
+) -> R<Vec<crate::purchasing::PurchaseOrder>> {
+    Ok(Json(
+        s.purchase_orders(&p, q.status.as_deref(), q.brand.as_deref())
+            .await?,
+    ))
+}
+
+async fn purchase_order(
+    State(s): State<AppState>,
+    Extension(p): Extension<Principal>,
+    Path(id): Path<i64>,
+) -> R<crate::purchasing::PurchaseOrder> {
+    Ok(Json(s.purchase_order(&p, id).await?))
+}
+
+async fn draft_po(
+    State(s): State<AppState>,
+    Extension(p): Extension<Principal>,
+    Json(b): Json<crate::purchasing::DraftPo>,
+) -> R<crate::purchasing::PurchaseOrder> {
+    Ok(Json(s.draft_po(&p, &b).await?))
+}
+
+async fn approve_po(
+    State(s): State<AppState>,
+    Extension(p): Extension<Principal>,
+    Path(id): Path<i64>,
+) -> R<crate::purchasing::PurchaseOrder> {
+    Ok(Json(s.approve_po(&p, id).await?))
+}
+
+async fn send_po(
+    State(s): State<AppState>,
+    Extension(p): Extension<Principal>,
+    Path(id): Path<i64>,
+) -> R<crate::purchasing::PurchaseOrder> {
+    Ok(Json(s.send_po(&p, id).await?))
+}
+
+async fn cancel_po(
+    State(s): State<AppState>,
+    Extension(p): Extension<Principal>,
+    Path(id): Path<i64>,
+) -> R<crate::purchasing::PurchaseOrder> {
+    Ok(Json(s.cancel_po(&p, id).await?))
+}
+
+async fn receive_po(
+    State(s): State<AppState>,
+    Extension(p): Extension<Principal>,
+    Path(id): Path<i64>,
+    body: Option<Json<crate::purchasing::ReceivePo>>,
+) -> R<crate::purchasing::Receipt> {
+    let b = body.map(|b| b.0).unwrap_or_default();
+    Ok(Json(s.receive_po(&p, id, b.lines.as_deref()).await?))
 }

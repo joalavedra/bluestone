@@ -90,6 +90,8 @@ pub struct ItemSummary {
     pub channels: Vec<String>,
     pub on_hand: i64,
     pub sold_30d: i64,
+    /// Units on open purchase orders, already netted out of `suggested_reorder_qty`.
+    pub on_order: i64,
     pub daily_velocity: f64,
     pub days_cover: Option<f64>,
     pub reorder_point: Option<i64>,
@@ -121,6 +123,7 @@ struct ItemRow {
     channels: Option<String>,
     image_url: Option<String>,
     price: Option<f64>,
+    on_order: i64,
 }
 
 impl From<ItemRow> for ItemSummary {
@@ -142,10 +145,11 @@ impl From<ItemRow> for ItemSummary {
             "ok"
         };
         let suggested = match r.target_stock {
-            Some(t) => (t - r.on_hand).max(0),
+            Some(t) => (t - r.on_hand - r.on_order).max(0),
             None if status != "ok" => {
                 ((velocity * (lead + VELOCITY_WINDOW_DAYS) as f64).ceil() as i64 - r.on_hand)
                     .max(r.reorder_point.unwrap_or(0) - r.on_hand)
+                    .saturating_sub(r.on_order)
                     .max(0)
             }
             None => 0,
@@ -171,6 +175,7 @@ impl From<ItemRow> for ItemSummary {
             channels: split(r.channels),
             on_hand: r.on_hand,
             sold_30d: r.sold_30d,
+            on_order: r.on_order,
             daily_velocity: (velocity * 100.0).round() / 100.0,
             days_cover,
             reorder_point: r.reorder_point,
@@ -196,7 +201,9 @@ SELECT i.id, b.name AS brand, i.sku, i.name, s.name AS supplier, s.lead_time_day
   (SELECT GROUP_CONCAT(t.name) FROM item_tags it JOIN tags t ON t.id = it.tag_id WHERE it.item_id = i.id) AS tags,
   (SELECT GROUP_CONCAT(c.kind || ':' || c.name) FROM listings l JOIN channels c ON c.id = l.channel_id WHERE l.item_id = i.id) AS channels,
   (SELECT l.image_url FROM listings l WHERE l.item_id = i.id AND l.image_url IS NOT NULL LIMIT 1) AS image_url,
-  (SELECT MIN(l.price) FROM listings l WHERE l.item_id = i.id) AS price
+  (SELECT MIN(l.price) FROM listings l WHERE l.item_id = i.id) AS price,
+  COALESCE((SELECT SUM(pl.quantity - pl.received) FROM po_lines pl JOIN purchase_orders po ON po.id = pl.po_id
+     WHERE pl.item_id = i.id AND po.status IN ('draft','approved','sent','partial')), 0) AS on_order
 FROM items i JOIN brands b ON b.id = i.brand_id LEFT JOIN suppliers s ON s.id = i.supplier_id
 WHERE i.archived = 0"#;
 

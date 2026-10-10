@@ -504,6 +504,57 @@ impl BluestoneMcp {
     }
 
     #[tool(
+        description = "List purchase orders (default: open ones) with lines, received quantities and cost."
+    )]
+    async fn list_purchase_orders(
+        &self,
+        ctx: RequestContext<RoleServer>,
+        Parameters(a): Parameters<crate::purchasing::PoListArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let p = self.principal(&ctx)?;
+        let status = a.status.unwrap_or_else(|| "open".into());
+        done(
+            self.svc
+                .purchase_orders(&p, Some(&status), a.brand.as_deref())
+                .await,
+        )
+    }
+
+    #[tool(description = "Get one purchase order with its lines.")]
+    async fn get_purchase_order(
+        &self,
+        ctx: RequestContext<RoleServer>,
+        Parameters(a): Parameters<crate::purchasing::PoIdArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let p = self.principal(&ctx)?;
+        done(self.svc.purchase_order(&p, a.id).await)
+    }
+
+    #[tool(
+        description = "Draft a purchase order for a brand. Pass `lines` (item + quantity), or just a `supplier` to add every low/out item from that supplier at its suggested quantity (net of what is already on order). The draft waits for a human to approve and send it."
+    )]
+    async fn draft_purchase_order(
+        &self,
+        ctx: RequestContext<RoleServer>,
+        Parameters(a): Parameters<crate::purchasing::DraftPo>,
+    ) -> Result<CallToolResult, McpError> {
+        let p = self.principal(&ctx)?;
+        done(self.svc.draft_po(&p, &a).await)
+    }
+
+    #[tool(
+        description = "Record goods received on an approved/sent purchase order (all outstanding, or specific lines). Master brands: adds stock to the PO's warehouse and pushes it to every channel. Human tokens only."
+    )]
+    async fn receive_purchase_order(
+        &self,
+        ctx: RequestContext<RoleServer>,
+        Parameters(a): Parameters<crate::purchasing::ReceivePoArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let p = self.principal(&ctx)?;
+        done(self.svc.receive_po(&p, a.id, a.lines.as_deref()).await)
+    }
+
+    #[tool(
         description = "Propose moving stock between two warehouses of a master-mode brand. Creates a pending proposal; on approval the ledger records both legs and channels are updated."
     )]
     async fn propose_stock_transfer(

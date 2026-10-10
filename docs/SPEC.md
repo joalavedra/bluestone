@@ -114,3 +114,13 @@ Light, calm operations UI: white cards on a soft grey canvas, one strong blue ac
 | **Reorder** | Low/out items grouped by supplier with suggested quantities (read-only in v0; feeds PO drafting in phase 1). |
 | **Activity** | Timeline filterable by agent/human/system. |
 | **Channels** | Brands, connected channels, last sync, errors, "Sync now"; how to connect an agent (MCP config snippets). |
+
+## Purchase orders
+
+`purchase_orders` (brand, supplier, receiving `warehouse`, `status`, `created_by`, `approved_by`) with `po_lines` (item, `quantity`, `received`, `unit_cost`).
+
+- **Draft** (scope `propose`, so agents can): explicit `lines`, or just a `supplier` to add every low/out item of that supplier at its suggested quantity. REST `POST /api/purchase-orders`, MCP `draft_purchase_order`.
+- **Approve → sent → received** (human tokens with `approve`): `POST /api/purchase-orders/{id}/approve|send|receive|cancel`. Receiving takes optional `lines` (item + quantity, at most what is outstanding); without them everything outstanding is received. The PO moves to `partial` or `received`. Cancelling a `partial` PO closes it short.
+- **Stock:** for master-mode brands each receipt is a `receipt` ledger entry at the PO's warehouse, pushed to every channel. Mirror-mode brands only record what arrived; the response notes that store stock was not changed.
+- `ItemSummary.on_order` = units outstanding on open POs; `suggested_reorder_qty` is net of it, so the Reorder list does not suggest the same units twice.
+- MCP: `list_purchase_orders`, `get_purchase_order`, `draft_purchase_order`, `receive_purchase_order` (human tokens only).
