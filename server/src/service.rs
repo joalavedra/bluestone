@@ -1207,6 +1207,27 @@ impl Service {
             .bind(source)
             .execute(&mut *tx)
             .await?;
+        // Sales-order reservations follow the merged item too.
+        sqlx::query(
+            "UPDATE so_lines AS t SET quantity = t.quantity + s.quantity
+             FROM so_lines AS s WHERE s.item_id = ?1 AND t.item_id = ?2 AND s.so_id = t.so_id",
+        )
+        .bind(source)
+        .bind(target)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "DELETE FROM so_lines WHERE item_id = ?1 AND so_id IN (SELECT so_id FROM so_lines WHERE item_id = ?2)",
+        )
+        .bind(source)
+        .bind(target)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("UPDATE so_lines SET item_id = ? WHERE item_id = ?")
+            .bind(target)
+            .bind(source)
+            .execute(&mut *tx)
+            .await?;
         sqlx::query("UPDATE notes SET item_id = ? WHERE item_id = ?")
             .bind(target)
             .bind(source)

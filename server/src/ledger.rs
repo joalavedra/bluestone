@@ -291,6 +291,21 @@ impl Service {
         brand: &str,
         mode: &str,
     ) -> SResult<Option<Reconcile>> {
+        // Channels show master stock net of reservations; mirror mode would subtract them twice.
+        if mode == "mirror" {
+            let (n,): (i64,) = sqlx::query_as(
+                "SELECT COUNT(*) FROM sales_orders so JOIN brands b ON b.id = so.brand_id
+                 WHERE so.status = 'confirmed' AND (CAST(b.id AS TEXT) = ?1 OR b.name = ?1 COLLATE NOCASE)",
+            )
+            .bind(brand.trim())
+            .fetch_one(&self.pool)
+            .await?;
+            if n > 0 {
+                return Err(ServiceError::Conflict(format!(
+                    "{n} confirmed sales orders still reserve stock; fulfil or cancel them before switching to mirror"
+                )));
+            }
+        }
         // Sync first so the master baseline includes sales made since the last sync.
         if mode == "master" {
             who.require(Scope::Admin)?;

@@ -67,13 +67,14 @@ const SO_SELECT: &str = "SELECT so.id, so.brand_id, b.name AS brand, b.stock_mod
   so.approved_by, so.created_at, so.updated_at
 FROM sales_orders so JOIN brands b ON b.id = so.brand_id LEFT JOIN warehouses w ON w.id = so.warehouse_id";
 
-/// On-hand for an item (ledger in master mode, store stock in mirror mode) minus confirmed orders
-/// other than `except`.
+/// On-hand for an item minus confirmed orders other than `?1`. Master brands count only the
+/// order's warehouse `?2` (when set); mirror brands count store stock overall.
 const AVAILABLE: &str = "(CASE WHEN b.stock_mode = 'master'
-    THEN COALESCE((SELECT SUM(s.delta) FROM stock_ledger s WHERE s.item_id = i.id), 0)
+    THEN COALESCE((SELECT SUM(s.delta) FROM stock_ledger s WHERE s.item_id = i.id AND (?2 IS NULL OR s.warehouse_id = ?2)), 0)
     ELSE COALESCE((SELECT SUM(ls.quantity) FROM listing_stock ls JOIN listings l ON l.id = ls.listing_id WHERE l.item_id = i.id), 0)
   END - COALESCE((SELECT SUM(x.quantity) FROM so_lines x JOIN sales_orders xo ON xo.id = x.so_id
-    WHERE x.item_id = i.id AND xo.status = 'confirmed' AND xo.id <> ?1), 0))";
+    WHERE x.item_id = i.id AND xo.status = 'confirmed' AND xo.id <> ?1
+      AND (?2 IS NULL OR b.stock_mode <> 'master' OR xo.warehouse_id = ?2)), 0))";
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SoLineInput {
@@ -130,6 +131,7 @@ impl Service {
              WHERE sl.so_id = ?1 ORDER BY i.sku"
         ))
         .bind(r.id)
+        .bind(r.warehouse_id)
         .fetch_all(&self.pool)
         .await?;
         let open = r.status == "proposed" || r.status == "confirmed";
@@ -364,6 +366,17 @@ impl Service {
         Ok(errors)
     }
 
+    async fn with_push_warnings(&self, id: i64, row: &SoRow) -> SResult<SalesOrder> {
+        let errors = self.push_so_items(row).await?;
+        let mut so = self.so(id).await?;
+        so.warnings.extend(
+            errors
+                .into_iter()
+                .map(|e| format!("channel not updated yet (the next sync retries): {e}")),
+        );
+        Ok(so)
+    }
+
     /// Confirming reserves the stock; warehouse defaults to the brand's first one.
     pub async fn confirm_so(&self, who: &Principal, id: i64) -> SResult<SalesOrder> {
         who.require(Scope::Approve)?;
@@ -381,8 +394,7 @@ impl Service {
         let row = self
             .so_transition(who, id, "proposed", "confirmed", "confirmed")
             .await?;
-        self.push_so_items(&row).await?;
-        self.so(id).await
+        self.with_push_warnings(id, &row).await
     }
 
     pub async fn reject_so(&self, who: &Principal, id: i64) -> SResult<SalesOrder> {
@@ -400,8 +412,7 @@ impl Service {
         let row = self
             .so_transition(who, id, "confirmed", "cancelled", "cancelled")
             .await?;
-        self.push_so_items(&row).await?;
-        self.so(id).await
+        self.with_push_warnings(id, &row).await
     }
 
     /// Shipping a confirmed order: master brands record `sale` ledger entries at the order's
@@ -455,7 +466,6 @@ impl Service {
             ),
         )
         .await?;
-        self.push_so_items(&row).await?;
-        self.so(id).await
+        self.with_push_warnings(id, &row).await
     }
 }

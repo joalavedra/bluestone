@@ -90,7 +90,12 @@ function ItemPage() {
         <ProposeDialog item={item} />
       </div>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-        <Kpi label="On hand" value={num(item.on_hand)} />
+        <Kpi
+          label="On hand"
+          value={num(item.on_hand)}
+          hint={item.reserved ? `${num(item.reserved)} reserved · ${num(item.available)} available` : undefined}
+          tone={item.reserved ? "warn" : "default"}
+        />
         <Kpi
           label="Forecast"
           value={`${num(item.daily_velocity, 2)}/d`}
