@@ -92,9 +92,9 @@ function ItemPage() {
       <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
         <Kpi label="On hand" value={num(item.on_hand)} />
         <Kpi
-          label="Velocity"
+          label="Forecast"
           value={`${num(item.daily_velocity, 2)}/d`}
-          hint={`${item.sold_30d} sold in 30d`}
+          hint={`${item.forecast_method === "tsb" ? "intermittent (TSB)" : item.forecast_method === "ses" ? "smoothed (SES)" : "no sales"} · ${item.sold_30d} sold in 30d`}
         />
         <Kpi
           label="Days cover"
@@ -105,6 +105,7 @@ function ItemPage() {
         <Kpi
           label="Suggested reorder"
           value={num(item.suggested_reorder_qty)}
+          hint={`reorder at ${item.reorder_point ?? item.forecast_reorder_point} · safety ${item.safety_stock}`}
           tone={item.suggested_reorder_qty ? "accent" : "default"}
         />
       </div>

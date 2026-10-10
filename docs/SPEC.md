@@ -50,11 +50,12 @@ Items are matched across channels by SKU at sync time (same brand, same SKU → 
 ### Derived metrics
 
 - `on_hand` = mirror mode: sum of `listing_stock` across the item's listings and locations; master mode: sum of the item's ledger entries.
-- `daily_velocity` = units sold in the last 30 days / 30.
+- `daily_velocity` = forecast units/day from the last 90 days of sales (`server/src/forecast.rs`): SES for regular sellers, TSB for intermittent ones (average demand interval > 1.32 days), smoothing picked by in-sample error, days before the first sale ignored. `forecast_method` says which.
 - `days_cover` = `on_hand / daily_velocity` (null if nothing sold).
 - `lead_time_days` = item lead time, else supplier lead time, else 14.
-- `status` = `out` if on_hand ≤ 0; `low` if on_hand ≤ reorder point or days_cover < lead time; else `ok`.
-- `suggested_reorder_qty` = `target_stock − on_hand` if a target is set, else `velocity × (lead time + 30) − on_hand` for low/out items.
+- `safety_stock` = 1.65 (95% service) × forecast RMSE × √lead time; `forecast_reorder_point` = velocity × lead time + safety stock.
+- `status` = `out` if on_hand ≤ 0; `low` if on_hand ≤ the manual reorder point, or (if none is set) ≤ `forecast_reorder_point`; else `ok`.
+- `suggested_reorder_qty` = `target_stock − on_hand` if a target is set, else `velocity × (lead time + 30) + safety stock − on_hand` for low/out items.
 
 ### Master mode
 
