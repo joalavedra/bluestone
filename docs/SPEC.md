@@ -28,7 +28,7 @@ PrestaShop (WebService, 1.7–9) ──┘   (sync)      (hub)   └─ /api  RE
 
 | Table | Purpose |
 |---|---|
-| `brands` | A brand you manage (e.g. "Northwind Coffee"). |
+| `brands` | A brand you manage (e.g. "Northwind Coffee"), with `stock_mode` `mirror` (stores own stock) or `master` (Bluestone owns stock). |
 | `channels` | A store of a brand: `kind` (`shopify`/`prestashop`), `base_url`, `credential_env`, sync status. |
 | `locations` | Stock locations per channel (Shopify locations; PrestaShop has one, `default`). |
 | `items` | Bluestone's own unit, unique per `(brand, sku)`. Holds organisation fields: supplier, reorder point, target stock, lead time, unit cost. |
@@ -39,7 +39,9 @@ PrestaShop (WebService, 1.7–9) ──┘   (sync)      (hub)   └─ /api  RE
 | `tags`, `item_tags` | Free-form tags (lowercased). |
 | `suppliers` | Name, email, default lead time. |
 | `notes` | Free text on an item, attributed. |
-| `proposals` | `stock_adjustment` / `price_change` / `listing_status`, before/after JSON, rationale, status `pending → applied/failed/rejected`. |
+| `warehouses` | Master mode: Bluestone's stock places per brand. Channel `locations.warehouse_id` maps each store location to one; same-named locations across channels share a warehouse. |
+| `stock_ledger` | Master mode: append-only stock movements per item × warehouse (`initial`, `sale`, `adjustment`, `transfer`, `receipt`, `correction`) with actor, note and a reference (order line / proposal). |
+| `proposals` | `stock_adjustment` / `price_change` / `listing_status` on a listing, or `ledger_adjustment` / `stock_transfer` on warehouses; before/after JSON, rationale, status `pending → applied/failed/rejected`. |
 | `activity` | Append-only log of every sync, organise action, proposal and decision. |
 | `tokens` | Hashed bearer tokens with `kind` (agent/human) and scopes. |
 
@@ -47,7 +49,7 @@ Items are matched across channels by SKU at sync time (same brand, same SKU → 
 
 ### Derived metrics
 
-- `on_hand` = sum of `listing_stock` across the item's listings and locations.
+- `on_hand` = mirror mode: sum of `listing_stock` across the item's listings and locations; master mode: sum of the item's ledger entries.
 - `daily_velocity` = forecast units/day from the last 90 days of sales (`server/src/forecast.rs`): SES for regular sellers, TSB for intermittent ones (average demand interval > 1.32 days), smoothing picked by in-sample error, days before the first sale ignored. `forecast_method` says which.
 - `days_cover` = `on_hand / daily_velocity` (null if nothing sold).
 - `lead_time_days` = item lead time, else supplier lead time, else 14.
@@ -55,7 +57,14 @@ Items are matched across channels by SKU at sync time (same brand, same SKU → 
 - `status` = `out` if on_hand ≤ 0; `low` if on_hand ≤ the manual reorder point, or (if none is set) ≤ `forecast_reorder_point`; else `ok`.
 - `suggested_reorder_qty` = `target_stock − on_hand` if a target is set, else `velocity × (lead time + 30) + safety stock − on_hand` for low/out items.
 
-> Open question: brands selling the same physical stock on both Shopify and PrestaShop will have on_hand double-counted in v0. Phase 2 (Bluestone as stock master) resolves this; until then tag one channel's listing as the master or keep separate SKUs.
+### Master mode
+
+Brands selling the same physical stock on several channels double-count in mirror mode. Switching a brand to `master` (human-only, `POST /api/brands/:id/stock-mode`) fixes that:
+
+1. Every channel of the brand is synced first (the switch is refused if one fails, so the baseline includes the latest sales). Channel locations are then mapped to warehouses by name, and each item × warehouse gets an `initial` ledger entry from current channel stock (the **max** across channels, not the sum). Orders placed before the switch are history and never hit the ledger.
+2. Every sync ledgers new order lines as `sale` entries (at the channel's first warehouse), then pushes `max(ledger, 0)` to every channel location. A synced channel showing anything else is **drift**: logged and overwritten. A ledger below zero is **oversold**: logged.
+3. Agent stock proposals target a warehouse (`ledger_adjustment`, compare-and-set against the ledger) or move stock (`stock_transfer`); on approval the ledger records them and pushes to every channel.
+4. Switching back to `mirror` keeps the ledger as history; re-entering master re-baselines from the stores with `correction` entries. Merging two master items keeps the larger quantity per warehouse (they are assumed to be the same physical stock).
 
 ## Auth & scopes
 
@@ -77,15 +86,15 @@ Transports: **stdio** (`bluestone mcp`, token from `BLUESTONE_TOKEN`) for Claude
 
 | Tier | Tools |
 |---|---|
-| Read | `overview`, `list_brands`, `search_items`, `get_item`, `list_low_stock`, `sales_summary`, `list_proposals`, `list_tags`, `list_suppliers`, `recent_activity`, `sync_channels` |
+| Read | `overview`, `list_brands`, `search_items`, `get_item`, `list_low_stock`, `sales_summary`, `list_proposals`, `list_tags`, `list_suppliers`, `recent_activity`, `sync_channels`, `stock_ledger`, `list_warehouses` |
 | Organise | `tag_items`, `untag_items`, `set_supplier`, `set_reorder_settings`, `add_note`, `merge_items` |
-| Propose | `propose_stock_adjustment`, `propose_price_change`, `propose_listing_status` |
+| Propose | `propose_stock_adjustment` (warehouse target in master mode), `propose_stock_transfer`, `propose_price_change`, `propose_listing_status` |
 
 Items are addressed by id or SKU (+ `brand` when a SKU exists in several brands). Errors are returned as tool errors with an actionable message (e.g. "item is listed on several channels (shopify-eu, presta); pass `channel`").
 
 ## REST API (for the UI)
 
-All under `/api`, bearer auth. `GET /me`, `GET /overview`, `GET /brands`, `GET /items?query&brand&tag&supplier&status`, `GET /items/:id`, `PATCH /items/:id`, `POST /items/:id/tags`, `DELETE /items/:id/tags/:tag`, `POST /items/:id/notes`, `POST /items/supplier`, `GET /tags`, `GET /suppliers`, `GET /sales?days&brand`, `GET /proposals?status`, `POST /proposals` (`kind` + fields), `POST /proposals/:id/approve`, `POST /proposals/:id/reject`, `GET /activity?actor_kind`, `GET|POST /channels`, `POST /channels/:id/sync`, `POST /sync`.
+All under `/api`, bearer auth. `GET /me`, `GET /overview`, `GET /brands`, `POST /brands/:id/stock-mode` (`mirror`/`master`, human only), `GET /warehouses?brand`, `GET /items/:id/ledger`, `GET /items?query&brand&tag&supplier&status`, `GET /items/:id`, `PATCH /items/:id`, `POST /items/:id/tags`, `DELETE /items/:id/tags/:tag`, `POST /items/:id/notes`, `POST /items/supplier`, `GET /tags`, `GET /suppliers`, `GET /sales?days&brand`, `GET /proposals?status`, `POST /proposals` (`kind` + fields), `POST /proposals/:id/approve`, `POST /proposals/:id/reject`, `GET /activity?actor_kind`, `GET|POST /channels`, `POST /channels/:id/sync`, `POST /sync`.
 
 ## Connectors
 

@@ -1,7 +1,17 @@
-import { QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import {
+  QueryClient,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query"
 
 export const queryClient = new QueryClient({
-  defaultOptions: { queries: { staleTime: 10_000, retry: (n, e) => !(e instanceof AuthError) && n < 2 } },
+  defaultOptions: {
+    queries: {
+      staleTime: 10_000,
+      retry: (n, e) => !(e instanceof AuthError) && n < 2,
+    },
+  },
 })
 
 const TOKEN_KEY = "bluestone.token"
@@ -23,7 +33,11 @@ export function setToken(token: string | null) {
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`/api${path}`, {
     ...init,
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken() ?? ""}`, ...init?.headers },
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${getToken() ?? ""}`,
+      ...init?.headers,
+    },
   })
   if (res.status === 401) throw new AuthError("Invalid or missing token")
   const body = await res.json().catch(() => ({}))
@@ -75,7 +89,31 @@ export interface BrandSummary {
   low_stock_count: number
   out_of_stock_count: number
   stock_value: number
+  stock_mode: StockMode
   channels: Array<ChannelInfo>
+}
+
+export type StockMode = "mirror" | "master"
+
+export interface LedgerEntry {
+  id: number
+  warehouse: string
+  delta: number
+  reason:
+    "initial" | "sale" | "adjustment" | "transfer" | "receipt" | "correction"
+  ref_type: string | null
+  ref_id: number | null
+  actor: string
+  note: string | null
+  created_at: string
+}
+
+export interface Warehouse {
+  id: number
+  brand: string
+  name: string
+  locations: string | null
+  units: number
 }
 
 export interface ActivityEntry {
@@ -91,13 +129,18 @@ export interface ActivityEntry {
 
 export interface Proposal {
   id: number
-  kind: "stock_adjustment" | "price_change" | "listing_status"
+  kind:
+    | "stock_adjustment"
+    | "price_change"
+    | "listing_status"
+    | "ledger_adjustment"
+    | "stock_transfer"
   status: "pending" | "applied" | "failed" | "rejected"
   item_id: number | null
   item_sku: string | null
   item_name: string | null
   brand: string | null
-  listing_id: number
+  listing_id: number | null
   channel: string
   before: Record<string, any>
   after: Record<string, any>
@@ -134,7 +177,13 @@ export interface Sales {
   revenue: number
   orders: number
   by_day: Array<DayPoint>
-  top_items: Array<{ sku: string; name: string; brand: string; units: number; revenue: number }>
+  top_items: Array<{
+    sku: string
+    name: string
+    brand: string
+    units: number
+    revenue: number
+  }>
 }
 
 export interface ItemDetail extends ItemSummary {
@@ -155,6 +204,13 @@ export interface ItemDetail extends ItemSummary {
   notes: Array<{ id: number; body: string; actor: string; created_at: string }>
   sales_by_day: Array<DayPoint>
   proposals: Array<Proposal>
+  stock_mode: StockMode
+  warehouses: Array<{
+    warehouse_id: number
+    warehouse: string
+    quantity: number
+  }>
+  ledger: Array<LedgerEntry>
 }
 
 export interface Me {
@@ -165,7 +221,8 @@ export interface Me {
 
 const qs = (params: Record<string, string | number | undefined | null>) => {
   const s = new URLSearchParams()
-  for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null && v !== "") s.set(k, String(v))
+  for (const [k, v] of Object.entries(params))
+    if (v !== undefined && v !== null && v !== "") s.set(k, String(v))
   const out = s.toString()
   return out ? `?${out}` : ""
 }
@@ -178,34 +235,82 @@ export interface ItemFilter {
   status?: string
 }
 
-export const useMe = () => useQuery({ queryKey: ["me"], queryFn: () => api<Me>("/me") })
-export const useOverview = () => useQuery({ queryKey: ["overview"], queryFn: () => api<Overview>("/overview") })
-export const useBrands = () => useQuery({ queryKey: ["brands"], queryFn: () => api<Array<BrandSummary>>("/brands") })
+export const useMe = () =>
+  useQuery({ queryKey: ["me"], queryFn: () => api<Me>("/me") })
+export const useOverview = () =>
+  useQuery({
+    queryKey: ["overview"],
+    queryFn: () => api<Overview>("/overview"),
+  })
+export const useWarehouses = () =>
+  useQuery({
+    queryKey: ["warehouses"],
+    queryFn: () => api<Array<Warehouse>>("/warehouses"),
+  })
+export const useBrands = () =>
+  useQuery({
+    queryKey: ["brands"],
+    queryFn: () => api<Array<BrandSummary>>("/brands"),
+  })
 export const useItems = (f: ItemFilter) =>
-  useQuery({ queryKey: ["items", f], queryFn: () => api<Array<ItemSummary>>(`/items${qs({ ...f })}`) })
-export const useItem = (id: number) => useQuery({ queryKey: ["item", id], queryFn: () => api<ItemDetail>(`/items/${id}`) })
-export const useTags = () => useQuery({ queryKey: ["tags"], queryFn: () => api<Array<{ name: string; items: number }>>("/tags") })
+  useQuery({
+    queryKey: ["items", f],
+    queryFn: () => api<Array<ItemSummary>>(`/items${qs({ ...f })}`),
+  })
+export const useItem = (id: number) =>
+  useQuery({
+    queryKey: ["item", id],
+    queryFn: () => api<ItemDetail>(`/items/${id}`),
+  })
+export const useTags = () =>
+  useQuery({
+    queryKey: ["tags"],
+    queryFn: () => api<Array<{ name: string; items: number }>>("/tags"),
+  })
 export const useSuppliers = () =>
   useQuery({
     queryKey: ["suppliers"],
-    queryFn: () => api<Array<{ id: number; name: string; email: string | null; lead_time_days: number | null; items: number }>>("/suppliers"),
+    queryFn: () =>
+      api<
+        Array<{
+          id: number
+          name: string
+          email: string | null
+          lead_time_days: number | null
+          items: number
+        }>
+      >("/suppliers"),
   })
 export const useSales = (days: number, brand?: string) =>
-  useQuery({ queryKey: ["sales", days, brand], queryFn: () => api<Sales>(`/sales${qs({ days, brand })}`) })
+  useQuery({
+    queryKey: ["sales", days, brand],
+    queryFn: () => api<Sales>(`/sales${qs({ days, brand })}`),
+  })
 export const useProposals = (status: string) =>
-  useQuery({ queryKey: ["proposals", status], queryFn: () => api<Array<Proposal>>(`/proposals${qs({ status })}`) })
+  useQuery({
+    queryKey: ["proposals", status],
+    queryFn: () => api<Array<Proposal>>(`/proposals${qs({ status })}`),
+  })
 export const useActivity = (actorKind: string) =>
   useQuery({
     queryKey: ["activity", actorKind],
-    queryFn: () => api<Array<ActivityEntry>>(`/activity${qs({ actor_kind: actorKind, limit: 200 })}`),
+    queryFn: () =>
+      api<Array<ActivityEntry>>(
+        `/activity${qs({ actor_kind: actorKind, limit: 200 })}`
+      ),
   })
 
 /** Mutation that refreshes every query on success — the dataset is small and views overlap heavily. */
 export function useAction<TVars>(fn: (v: TVars) => Promise<unknown>) {
   const qc = useQueryClient()
-  return useMutation({ mutationFn: fn, onSuccess: () => qc.invalidateQueries() })
+  return useMutation({
+    mutationFn: fn,
+    onSuccess: () => qc.invalidateQueries(),
+  })
 }
 
-export const post = (path: string, body?: unknown) => api(path, { method: "POST", body: JSON.stringify(body ?? {}) })
-export const patch = (path: string, body: unknown) => api(path, { method: "PATCH", body: JSON.stringify(body) })
+export const post = (path: string, body?: unknown) =>
+  api(path, { method: "POST", body: JSON.stringify(body ?? {}) })
+export const patch = (path: string, body: unknown) =>
+  api(path, { method: "PATCH", body: JSON.stringify(body) })
 export const del = (path: string) => api(path, { method: "DELETE" })

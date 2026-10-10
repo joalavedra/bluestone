@@ -30,7 +30,8 @@ Why next: real data surfaces matching/velocity issues early; policy rules cut ap
 
 Why: brands selling on both platforms double-count or oversell; one master quantity fixes that.
 
-- Per-item master quantity; channels get `available = master − reserved`, pushed on change.
+- ✅ Per-brand master mode: append-only stock ledger, warehouses mapped from channel locations, ledger pushed to every channel after each change and sync, drift and oversell detection, warehouse transfers.
+- Reservations (`available = on hand − reserved`) once sales orders exist.
 - Receiving POs updates master stock.
 - ✅ Native forecasting (SES / TSB after statsforecast) with safety stock and forecast reorder points, replacing 30-day velocity.
 - Weekly seasonality and promo-aware forecasts.
