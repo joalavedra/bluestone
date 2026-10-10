@@ -62,6 +62,7 @@ export interface ItemSummary {
   reorder_point: number | null
   target_stock: number | null
   lead_time_days: number
+  on_order: number
   suggested_reorder_qty: number
   unit_cost: number | null
   price: number | null
@@ -246,6 +247,38 @@ export const useWarehouses = () =>
   useQuery({
     queryKey: ["warehouses"],
     queryFn: () => api<Array<Warehouse>>("/warehouses"),
+  })
+export type PoStatus = "draft" | "approved" | "sent" | "partial" | "received" | "cancelled"
+export interface PoLine {
+  id: number
+  item_id: number
+  sku: string
+  name: string
+  quantity: number
+  received: number
+  unit_cost: number | null
+}
+export interface PurchaseOrder {
+  id: number
+  brand: string
+  supplier: string | null
+  supplier_email: string | null
+  warehouse: string | null
+  status: PoStatus
+  note: string | null
+  created_by: string
+  approved_by: string | null
+  created_at: string
+  updated_at: string
+  units: number
+  received_units: number
+  total_cost: number
+  lines: Array<PoLine>
+}
+export const usePurchaseOrders = (status = "open") =>
+  useQuery({
+    queryKey: ["purchase-orders", status],
+    queryFn: () => api<Array<PurchaseOrder>>(`/purchase-orders${qs({ status })}`),
   })
 export const useBrands = () =>
   useQuery({

@@ -107,6 +107,27 @@ async fn entry(
     Ok(())
 }
 
+pub(crate) async fn record_receipt(
+    conn: &mut SqliteConnection,
+    item: i64,
+    wh: i64,
+    quantity: i64,
+    po: i64,
+    actor: &str,
+) -> SResult<()> {
+    entry(
+        conn,
+        item,
+        wh,
+        quantity,
+        "receipt",
+        Some(("purchase_order", po)),
+        actor,
+        None,
+    )
+    .await
+}
+
 /// Map unmapped channel locations of a brand to a warehouse of the same name (created on demand).
 async fn map_locations(conn: &mut SqliteConnection, brand_id: i64) -> SResult<()> {
     sqlx::query(

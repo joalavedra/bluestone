@@ -52,3 +52,24 @@ echo "store after manual edit: $(qty)"
 curl "${H[@]}" -X POST $API/api/sync | jq -c '.[0].master'
 echo "store after sync: $(qty)"
 test "$(qty)" = 60
+
+echo "--- purchase orders: agent drafts, human approves, partial + full receipt into the ledger"
+OUT=$(mcp '{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"draft_purchase_order","arguments":{"brand":"Northwind Coffee","warehouse":"Barcelona warehouse","lines":[{"item":"NW-ESP-250","quantity":24,"unit_cost":4.1}]}}}' | sed -n 's/^data: //p')
+PO=$(echo "$OUT" | jq -r '.result.content[0].text' | jq -r .id)
+OUT=$(mcp '{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"receive_purchase_order","arguments":{"id":'"$PO"'}}}' | sed -n 's/^data: //p')
+echo "agent receive: $(echo "$OUT" | jq -r '.result.content[0].text')"
+test "$(echo "$OUT" | jq -r '.result.isError')" = true
+curl "${H[@]}" -X POST "$API/api/purchase-orders/$PO/approve" | jq -c '{id, status, units}'
+test "$(curl "${H[@]}" "$API/api/items?query=NW-ESP-250" | jq '.[0].on_order')" = 24
+curl "${H[@]}" -X POST "$API/api/purchase-orders/$PO/receive" -d '{"lines":[{"item":"NW-ESP-250","quantity":10}]}' | jq -c '{received_units, status: .po.status, push_errors}'
+echo "store after partial receipt: $(qty)"
+test "$(qty)" = 70
+curl "${H[@]}" -X POST "$API/api/purchase-orders/$PO/receive" -d "{}" | jq -c '{received_units, status: .po.status}'
+echo "store after full receipt: $(qty)"
+test "$(qty)" = 84
+# Repeated lines cannot receive more than was ordered.
+PO2=$(curl "${H[@]}" -X POST "$API/api/purchase-orders" -d '{"brand":"Northwind Coffee","lines":[{"item":"NW-ESP-250","quantity":5}]}' | jq .id)
+curl "${H[@]}" -X POST "$API/api/purchase-orders/$PO2/approve" >/dev/null
+CODE=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $HUMAN" -H "Content-Type: application/json" -X POST "$API/api/purchase-orders/$PO2/receive" -d '{"lines":[{"item":"NW-ESP-250","quantity":3},{"item":"NW-ESP-250","quantity":3}]}')
+echo "over-receipt: HTTP $CODE, store $(qty)"
+test "$CODE" = 409 && test "$(qty)" = 84

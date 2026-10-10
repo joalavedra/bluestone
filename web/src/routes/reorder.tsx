@@ -1,9 +1,12 @@
-import { Link, createFileRoute } from "@tanstack/react-router"
+import { Link, createFileRoute, useNavigate } from "@tanstack/react-router"
+import { FilePlus } from "lucide-react"
+import { toast } from "sonner"
 import { Empty, PageHeader, StatusBadge } from "@/components/bits"
+import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { useItems, useSuppliers } from "@/lib/api"
-import type { ItemSummary } from "@/lib/api"
+import { post, useAction, useItems, useSuppliers } from "@/lib/api"
+import type { ItemSummary, PurchaseOrder } from "@/lib/api"
 import { money, num } from "@/lib/format"
 
 export const Route = createFileRoute("/reorder")({ component: ReorderPage })
@@ -13,24 +16,31 @@ function ReorderPage() {
   const { data: suppliers = [] } = useSuppliers()
   const groups = new Map<string, Array<ItemSummary>>()
   for (const i of items) {
-    const k = i.supplier ?? "No supplier"
+    const k = JSON.stringify([i.brand, i.supplier ?? ""])
     groups.set(k, [...(groups.get(k) ?? []), i])
   }
   return (
     <>
       <PageHeader
         title="Reorder"
-        description="Low and out-of-stock items grouped by supplier, with suggested quantities. Purchase-order drafting lands in phase 1."
+        description="Low and out-of-stock items grouped by supplier, with suggested quantities. Draft a purchase order per supplier; quantities are net of what is already on order."
       />
       {!items.length && <Empty>Nothing to reorder.</Empty>}
       <div className="flex flex-col gap-4">
-        {[...groups.entries()].map(([name, list]) => {
-          const s = suppliers.find((x) => x.name === name)
+        {[...groups.entries()].map(([key, list]) => {
+          const [brand, supplierName] = JSON.parse(key) as [string, string]
+          const name = supplierName || "No supplier"
+          const s = suppliers.find((x) => x.name === supplierName)
           const cost = list.reduce((acc, i) => acc + i.suggested_reorder_qty * (i.unit_cost ?? 0), 0)
           return (
-            <Card key={name} className="shadow-none">
+            <Card key={key} className="shadow-none">
               <CardHeader>
-                <CardTitle>{name}</CardTitle>
+                <CardTitle className="flex items-center justify-between gap-4">
+                  <span>
+                    {name} · {brand}
+                  </span>
+                  {supplierName && <DraftPoButton brand={brand} supplier={supplierName} />}
+                </CardTitle>
                 <CardDescription>
                   {list.length} items
                   {s?.lead_time_days ? ` · ${s.lead_time_days}d lead time` : ""}
@@ -47,6 +57,7 @@ function ReorderPage() {
                       <TableHead className="text-right">On hand</TableHead>
                       <TableHead className="text-right">Velocity</TableHead>
                       <TableHead className="text-right">Days cover</TableHead>
+                      <TableHead className="text-right">On order</TableHead>
                       <TableHead className="text-right">Lead time</TableHead>
                       <TableHead className="text-right">Suggested qty</TableHead>
                       <TableHead>Status</TableHead>
@@ -65,6 +76,7 @@ function ReorderPage() {
                         <TableCell className="text-right tabular-nums">{num(i.on_hand)}</TableCell>
                         <TableCell className="text-right tabular-nums">{num(i.daily_velocity, 1)}/d</TableCell>
                         <TableCell className="text-right tabular-nums">{i.days_cover === null ? "—" : `${num(i.days_cover, 1)}d`}</TableCell>
+                        <TableCell className="text-right tabular-nums">{i.on_order ? num(i.on_order) : "—"}</TableCell>
                         <TableCell className="text-right tabular-nums">{i.lead_time_days}d</TableCell>
                         <TableCell className="text-primary text-right font-semibold tabular-nums">{num(i.suggested_reorder_qty)}</TableCell>
                         <TableCell>
@@ -80,5 +92,27 @@ function ReorderPage() {
         })}
       </div>
     </>
+  )
+}
+
+function DraftPoButton({ brand, supplier }: { brand: string; supplier: string }) {
+  const navigate = useNavigate()
+  const draft = useAction(() => post("/purchase-orders", { brand, supplier }))
+  return (
+    <Button
+      size="sm"
+      disabled={draft.isPending}
+      onClick={() =>
+        draft.mutate(undefined, {
+          onSuccess: (po) => {
+            toast.success(`Drafted PO #${(po as PurchaseOrder).id}`)
+            void navigate({ to: "/purchase-orders" })
+          },
+          onError: (e) => toast.error(e.message),
+        })
+      }
+    >
+      <FilePlus className="size-4" /> Draft PO
+    </Button>
   )
 }

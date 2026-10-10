@@ -22,7 +22,7 @@ Why next: real data surfaces matching/velocity issues early; policy rules cut ap
 - Real Shopify dev store / custom app; first real PrestaShop shop (read-only key first).
 - Webhooks for orders and inventory → near real-time.
 - Policy rules (Valet-style): auto-apply under limits, per-agent budgets, quiet hours.
-- Purchase-order drafts per supplier from the reorder list (PDF / email draft, agent can propose, human sends).
+- ✅ Purchase orders: drafts per supplier from the reorder list or by the agent; human approves, sends, receives. PDF / email export still to do.
 - Saved views shared by UI and agent; stock history chart.
 - Postgres option for hosted deployments; Docker image + compose.
 
@@ -32,7 +32,7 @@ Why: brands selling on both platforms double-count or oversell; one master quant
 
 - ✅ Per-brand master mode: append-only stock ledger, warehouses mapped from channel locations, ledger pushed to every channel after each change and sync, drift and oversell detection, warehouse transfers.
 - Reservations (`available = on hand − reserved`) once sales orders exist.
-- Receiving POs updates master stock.
+- ✅ Receiving POs updates master stock (ledger `receipt` entries, pushed to channels).
 - ✅ Native forecasting (SES / TSB after statsforecast) with safety stock and forecast reorder points, replacing 30-day velocity.
 - Weekly seasonality and promo-aware forecasts.
 - Bundles / kits.

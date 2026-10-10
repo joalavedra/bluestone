@@ -46,7 +46,7 @@ Status: ✅ in v0 · 🟡 partial · 🔜 planned (see ROADMAP.md) · ✖ out of
 | Stock adjustments | ✔ | Shopify `inventorySetQuantities` (compare-and-set), PrestaShop `stock_availables` | ✅ |
 | Price changes | ✔ | Shopify variant price, PrestaShop product/combination price | ✅ |
 | Listing status | – | active / draft / archived | ✅ |
-| Purchase orders | ✔ | Draft POs per supplier from the reorder list, email/PDF | 🔜 phase 1 |
+| Purchase orders | ✔ | Draft per supplier from Reorder or by the agent (`draft_purchase_order`), approve → sent → partial/full receipt; receipts post to the ledger in master mode; on-order netted from suggestions. Email/PDF export pending | ✅ |
 | Cross-channel stock sync | ✔ | Per-brand master mode: stock ledger + warehouses, pushes quantity to every channel, drift & oversell detection | ✅ |
 | Stock transfers | ✔ | Between warehouses, proposed by the agent, recorded as two ledger legs | ✅ |
 

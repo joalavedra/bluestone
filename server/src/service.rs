@@ -90,6 +90,8 @@ pub struct ItemSummary {
     pub channels: Vec<String>,
     pub on_hand: i64,
     pub sold_30d: i64,
+    /// Units on open purchase orders, already netted out of `suggested_reorder_qty`.
+    pub on_order: i64,
     pub daily_velocity: f64,
     pub days_cover: Option<f64>,
     pub reorder_point: Option<i64>,
@@ -126,6 +128,7 @@ struct ItemRow {
     channels: Option<String>,
     image_url: Option<String>,
     price: Option<f64>,
+    on_order: i64,
     sales_90d: Option<String>,
 }
 
@@ -175,11 +178,12 @@ impl From<ItemRow> for ItemSummary {
             "ok"
         };
         let suggested = match r.target_stock {
-            Some(t) => (t - r.on_hand).max(0),
+            Some(t) => (t - r.on_hand - r.on_order).max(0),
             None if status != "ok" => {
                 ((velocity * (lead + VELOCITY_WINDOW_DAYS) as f64).ceil() as i64 + safety
                     - r.on_hand)
                     .max(r.reorder_point.unwrap_or(0) - r.on_hand)
+                    .saturating_sub(r.on_order)
                     .max(0)
             }
             None => 0,
@@ -205,6 +209,7 @@ impl From<ItemRow> for ItemSummary {
             channels: split(r.channels),
             on_hand: r.on_hand,
             sold_30d: r.sold_30d,
+            on_order: r.on_order,
             daily_velocity: (velocity * 100.0).round() / 100.0,
             days_cover,
             reorder_point: r.reorder_point,
@@ -234,6 +239,8 @@ SELECT i.id, b.name AS brand, i.sku, i.name, s.name AS supplier, s.lead_time_day
   (SELECT GROUP_CONCAT(c.kind || ':' || c.name) FROM listings l JOIN channels c ON c.id = l.channel_id WHERE l.item_id = i.id) AS channels,
   (SELECT l.image_url FROM listings l WHERE l.item_id = i.id AND l.image_url IS NOT NULL LIMIT 1) AS image_url,
   (SELECT MIN(l.price) FROM listings l WHERE l.item_id = i.id) AS price,
+  COALESCE((SELECT SUM(pl.quantity - pl.received) FROM po_lines pl JOIN purchase_orders po ON po.id = pl.po_id
+     WHERE pl.item_id = i.id AND po.status IN ('draft','approved','sent','partial')), 0) AS on_order,
   (SELECT GROUP_CONCAT(substr(o.ordered_at, 1, 10) || ':' || o.quantity) FROM order_lines o JOIN listings l ON l.id = o.listing_id
      WHERE l.item_id = i.id AND o.ordered_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-90 days')) AS sales_90d
 FROM items i JOIN brands b ON b.id = i.brand_id LEFT JOIN suppliers s ON s.id = i.supplier_id
@@ -1169,6 +1176,27 @@ impl Service {
             .execute(&mut *tx)
             .await?;
         sqlx::query("INSERT OR IGNORE INTO item_tags (item_id, tag_id) SELECT ?, tag_id FROM item_tags WHERE item_id = ?").bind(target).bind(source).execute(&mut *tx).await?;
+        // Open PO lines follow the merged item; lines on the same PO are combined.
+        sqlx::query(
+            "UPDATE po_lines AS t SET quantity = t.quantity + s.quantity, received = t.received + s.received
+             FROM po_lines AS s WHERE s.item_id = ?1 AND t.item_id = ?2 AND s.po_id = t.po_id",
+        )
+        .bind(source)
+        .bind(target)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "DELETE FROM po_lines WHERE item_id = ?1 AND po_id IN (SELECT po_id FROM po_lines WHERE item_id = ?2)",
+        )
+        .bind(source)
+        .bind(target)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("UPDATE po_lines SET item_id = ? WHERE item_id = ?")
+            .bind(target)
+            .bind(source)
+            .execute(&mut *tx)
+            .await?;
         sqlx::query("UPDATE notes SET item_id = ? WHERE item_id = ?")
             .bind(target)
             .bind(source)
