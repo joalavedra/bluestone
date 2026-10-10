@@ -63,6 +63,8 @@ export interface ItemSummary {
   target_stock: number | null
   lead_time_days: number
   on_order: number
+  reserved: number
+  available: number
   suggested_reorder_qty: number
   unit_cost: number | null
   price: number | null
@@ -279,6 +281,40 @@ export const usePurchaseOrders = (status = "open") =>
   useQuery({
     queryKey: ["purchase-orders", status],
     queryFn: () => api<Array<PurchaseOrder>>(`/purchase-orders${qs({ status })}`),
+  })
+export type SoStatus = "proposed" | "confirmed" | "fulfilled" | "rejected" | "cancelled"
+export interface SoLine {
+  id: number
+  item_id: number
+  sku: string
+  name: string
+  quantity: number
+  unit_price: number | null
+  available: number
+}
+export interface SalesOrder {
+  id: number
+  brand: string
+  customer: string
+  customer_email: string | null
+  external_ref: string | null
+  source: string | null
+  warehouse: string | null
+  status: SoStatus
+  note: string | null
+  created_by: string
+  approved_by: string | null
+  created_at: string
+  updated_at: string
+  units: number
+  total: number
+  warnings: Array<string>
+  lines: Array<SoLine>
+}
+export const useSalesOrders = (status = "open") =>
+  useQuery({
+    queryKey: ["sales-orders", status],
+    queryFn: () => api<Array<SalesOrder>>(`/sales-orders${qs({ status })}`),
   })
 export const useBrands = () =>
   useQuery({

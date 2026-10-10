@@ -92,6 +92,10 @@ pub struct ItemSummary {
     pub sold_30d: i64,
     /// Units on open purchase orders, already netted out of `suggested_reorder_qty`.
     pub on_order: i64,
+    /// Units reserved by confirmed sales orders.
+    pub reserved: i64,
+    /// `on_hand − reserved`; drives status, days cover and reorder suggestions.
+    pub available: i64,
     pub daily_velocity: f64,
     pub days_cover: Option<f64>,
     pub reorder_point: Option<i64>,
@@ -129,6 +133,7 @@ struct ItemRow {
     image_url: Option<String>,
     price: Option<f64>,
     on_order: i64,
+    reserved: i64,
     sales_90d: Option<String>,
 }
 
@@ -164,13 +169,14 @@ impl From<ItemRow> for ItemSummary {
         let velocity = fc.rate;
         let safety = crate::forecast::safety_stock(&fc, lead);
         let forecast_rop = crate::forecast::reorder_point(&fc, lead);
+        let available = r.on_hand - r.reserved;
         let days_cover =
-            (velocity > 0.0).then(|| (r.on_hand as f64 / velocity * 10.0).round() / 10.0);
+            (velocity > 0.0).then(|| (available as f64 / velocity * 10.0).round() / 10.0);
         let low = match r.reorder_point {
-            Some(rp) => r.on_hand <= rp,
-            None => velocity > 0.0 && r.on_hand <= forecast_rop,
+            Some(rp) => available <= rp,
+            None => velocity > 0.0 && available <= forecast_rop,
         };
-        let status = if r.on_hand <= 0 {
+        let status = if available <= 0 {
             "out"
         } else if low {
             "low"
@@ -178,11 +184,11 @@ impl From<ItemRow> for ItemSummary {
             "ok"
         };
         let suggested = match r.target_stock {
-            Some(t) => (t - r.on_hand - r.on_order).max(0),
+            Some(t) => (t - available - r.on_order).max(0),
             None if status != "ok" => {
                 ((velocity * (lead + VELOCITY_WINDOW_DAYS) as f64).ceil() as i64 + safety
-                    - r.on_hand)
-                    .max(r.reorder_point.unwrap_or(0) - r.on_hand)
+                    - available)
+                    .max(r.reorder_point.unwrap_or(0) - available)
                     .saturating_sub(r.on_order)
                     .max(0)
             }
@@ -210,6 +216,8 @@ impl From<ItemRow> for ItemSummary {
             on_hand: r.on_hand,
             sold_30d: r.sold_30d,
             on_order: r.on_order,
+            reserved: r.reserved,
+            available,
             daily_velocity: (velocity * 100.0).round() / 100.0,
             days_cover,
             reorder_point: r.reorder_point,
@@ -241,6 +249,8 @@ SELECT i.id, b.name AS brand, i.sku, i.name, s.name AS supplier, s.lead_time_day
   (SELECT MIN(l.price) FROM listings l WHERE l.item_id = i.id) AS price,
   COALESCE((SELECT SUM(pl.quantity - pl.received) FROM po_lines pl JOIN purchase_orders po ON po.id = pl.po_id
      WHERE pl.item_id = i.id AND po.status IN ('draft','approved','sent','partial')), 0) AS on_order,
+  COALESCE((SELECT SUM(sl.quantity) FROM so_lines sl JOIN sales_orders so ON so.id = sl.so_id
+     WHERE sl.item_id = i.id AND so.status = 'confirmed'), 0) AS reserved,
   (SELECT GROUP_CONCAT(substr(o.ordered_at, 1, 10) || ':' || o.quantity) FROM order_lines o JOIN listings l ON l.id = o.listing_id
      WHERE l.item_id = i.id AND o.ordered_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-90 days')) AS sales_90d
 FROM items i JOIN brands b ON b.id = i.brand_id LEFT JOIN suppliers s ON s.id = i.supplier_id
@@ -1193,6 +1203,27 @@ impl Service {
         .execute(&mut *tx)
         .await?;
         sqlx::query("UPDATE po_lines SET item_id = ? WHERE item_id = ?")
+            .bind(target)
+            .bind(source)
+            .execute(&mut *tx)
+            .await?;
+        // Sales-order reservations follow the merged item too.
+        sqlx::query(
+            "UPDATE so_lines AS t SET quantity = t.quantity + s.quantity
+             FROM so_lines AS s WHERE s.item_id = ?1 AND t.item_id = ?2 AND s.so_id = t.so_id",
+        )
+        .bind(source)
+        .bind(target)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "DELETE FROM so_lines WHERE item_id = ?1 AND so_id IN (SELECT so_id FROM so_lines WHERE item_id = ?2)",
+        )
+        .bind(source)
+        .bind(target)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("UPDATE so_lines SET item_id = ? WHERE item_id = ?")
             .bind(target)
             .bind(source)
             .execute(&mut *tx)

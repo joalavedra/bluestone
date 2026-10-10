@@ -128,6 +128,27 @@ pub(crate) async fn record_receipt(
     .await
 }
 
+pub(crate) async fn record_sale(
+    conn: &mut SqliteConnection,
+    item: i64,
+    wh: i64,
+    quantity: i64,
+    so: i64,
+    actor: &str,
+) -> SResult<()> {
+    entry(
+        conn,
+        item,
+        wh,
+        -quantity,
+        "sale",
+        Some(("sales_order", so)),
+        actor,
+        None,
+    )
+    .await
+}
+
 /// Map unmapped channel locations of a brand to a warehouse of the same name (created on demand).
 async fn map_locations(conn: &mut SqliteConnection, brand_id: i64) -> SResult<()> {
     sqlx::query(
@@ -270,6 +291,21 @@ impl Service {
         brand: &str,
         mode: &str,
     ) -> SResult<Option<Reconcile>> {
+        // Channels show master stock net of reservations; mirror mode would subtract them twice.
+        if mode == "mirror" {
+            let (n,): (i64,) = sqlx::query_as(
+                "SELECT COUNT(*) FROM sales_orders so JOIN brands b ON b.id = so.brand_id
+                 WHERE so.status = 'confirmed' AND (CAST(b.id AS TEXT) = ?1 OR b.name = ?1 COLLATE NOCASE)",
+            )
+            .bind(brand.trim())
+            .fetch_one(&self.pool)
+            .await?;
+            if n > 0 {
+                return Err(ServiceError::Conflict(format!(
+                    "{n} confirmed sales orders still reserve stock; fulfil or cancel them before switching to mirror"
+                )));
+            }
+        }
         // Sync first so the master baseline includes sales made since the last sync.
         if mode == "master" {
             who.require(Scope::Admin)?;
@@ -473,7 +509,9 @@ impl Service {
             "SELECT ls.listing_id, ls.location_id, ls.stock_ref, ls.quantity, l.item_id, lo.warehouse_id,
                lo.name AS location, lo.external_id AS location_ext, c.id AS channel_id, c.name AS channel, c.kind, c.base_url,
                c.credential_env, l.external_product_id, l.external_variant_id, l.inventory_ref, i.sku,
-               COALESCE((SELECT SUM(s.delta) FROM stock_ledger s WHERE s.item_id = l.item_id AND s.warehouse_id = lo.warehouse_id), 0) AS expected
+               COALESCE((SELECT SUM(s.delta) FROM stock_ledger s WHERE s.item_id = l.item_id AND s.warehouse_id = lo.warehouse_id), 0)
+                 - COALESCE((SELECT SUM(sl.quantity) FROM so_lines sl JOIN sales_orders so ON so.id = sl.so_id
+                     WHERE so.status = 'confirmed' AND sl.item_id = l.item_id AND so.warehouse_id = lo.warehouse_id), 0) AS expected
              FROM listing_stock ls JOIN listings l ON l.id = ls.listing_id JOIN locations lo ON lo.id = ls.location_id
              JOIN channels c ON c.id = l.channel_id JOIN items i ON i.id = l.item_id
              WHERE c.brand_id = ?1 AND lo.warehouse_id IS NOT NULL AND (?2 IS NULL OR l.item_id = ?2)

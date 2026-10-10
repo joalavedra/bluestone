@@ -127,3 +127,15 @@ Light, calm operations UI: white cards on a soft grey canvas, one strong blue ac
 - **Stock:** for master-mode brands each receipt is a `receipt` ledger entry at the PO's warehouse, pushed to every channel. Mirror-mode brands only record what arrived; the response notes that store stock was not changed.
 - `ItemSummary.on_order` = units outstanding on open POs; `suggested_reorder_qty` is net of it, so the Reorder list does not suggest the same units twice.
 - MCP: `list_purchase_orders`, `get_purchase_order`, `draft_purchase_order`, `receive_purchase_order` (human tokens only).
+
+## Sales orders
+
+For wholesale and off-platform orders (email, phone, a photo of an order sheet). Bluestone does not parse documents; the agent reads them and calls `propose_sales_order` with the customer, `external_ref`, `source` and lines. Shop and Faire orders keep arriving through sync.
+
+`sales_orders` (brand, customer, `source`, ship-from `warehouse`, `status`) with `so_lines` (item, `quantity`, `unit_price`, defaulting to the item's lowest channel price).
+
+- `proposed` (scope `propose`, so agents can) → `confirmed` | `rejected` → `fulfilled` | `cancelled`. Every step after proposing needs a human token with `approve`: `POST /api/sales-orders/{id}/confirm|reject|cancel|fulfil`.
+- **Reservations:** confirmed orders reserve stock. `ItemSummary.reserved` and `available = on_hand − reserved`; status, days cover and reorder suggestions use `available`. Master brands push `ledger − reserved` per warehouse to every channel, so shops cannot sell reserved units.
+- **Fulfil:** master brands get a `sale` ledger entry per line (`ref_type = sales_order`) in the same transaction as the status change. Mirror brands only record the status.
+- Each line reports `available` (excluding the order itself), and open orders carry `warnings` for shortfalls.
+- MCP: `propose_sales_order`, `list_sales_orders`, `get_sales_order`.

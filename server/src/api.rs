@@ -83,6 +83,9 @@ pub fn router(svc: AppState) -> Router {
         .route("/purchase-orders/{id}/send", post(send_po))
         .route("/purchase-orders/{id}/cancel", post(cancel_po))
         .route("/purchase-orders/{id}/receive", post(receive_po))
+        .route("/sales-orders", get(sales_orders).post(propose_so))
+        .route("/sales-orders/{id}", get(sales_order))
+        .route("/sales-orders/{id}/{action}", post(so_action))
         .route("/activity", get(activity))
         .route("/channels", get(channels).post(add_channel))
         .route("/channels/{id}/sync", post(sync_channel))
@@ -519,4 +522,49 @@ async fn receive_po(
 ) -> R<crate::purchasing::Receipt> {
     let b = body.map(|b| b.0).unwrap_or_default();
     Ok(Json(s.receive_po(&p, id, b.lines.as_deref()).await?))
+}
+
+async fn sales_orders(
+    State(s): State<AppState>,
+    Extension(p): Extension<Principal>,
+    Query(q): Query<PoQuery>,
+) -> R<Vec<crate::sales::SalesOrder>> {
+    Ok(Json(
+        s.sales_orders(&p, q.status.as_deref(), q.brand.as_deref())
+            .await?,
+    ))
+}
+
+async fn sales_order(
+    State(s): State<AppState>,
+    Extension(p): Extension<Principal>,
+    Path(id): Path<i64>,
+) -> R<crate::sales::SalesOrder> {
+    Ok(Json(s.sales_order(&p, id).await?))
+}
+
+async fn propose_so(
+    State(s): State<AppState>,
+    Extension(p): Extension<Principal>,
+    Json(b): Json<crate::sales::ProposeSalesOrder>,
+) -> R<crate::sales::SalesOrder> {
+    Ok(Json(s.propose_sales_order(&p, &b).await?))
+}
+
+async fn so_action(
+    State(s): State<AppState>,
+    Extension(p): Extension<Principal>,
+    Path((id, action)): Path<(i64, String)>,
+) -> R<crate::sales::SalesOrder> {
+    Ok(Json(match action.as_str() {
+        "confirm" => s.confirm_so(&p, id).await?,
+        "reject" => s.reject_so(&p, id).await?,
+        "cancel" => s.cancel_so(&p, id).await?,
+        "fulfil" | "fulfill" => s.fulfil_so(&p, id).await?,
+        other => {
+            return Err(ServiceError::NotFound(format!(
+                "unknown sales-order action `{other}`"
+            )));
+        }
+    }))
 }

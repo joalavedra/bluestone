@@ -1,5 +1,5 @@
 import { Link, useRouterState } from "@tanstack/react-router"
-import { Activity, Boxes, ClipboardList, Inbox, LayoutDashboard, LogOut, Plug, ShoppingCart } from "lucide-react"
+import { Activity, Boxes, ClipboardList, Inbox, LayoutDashboard, LogOut, Plug, ReceiptText, ShoppingCart } from "lucide-react"
 import { useEffect, useState } from "react"
 import type { ReactNode } from "react"
 import { Button } from "@/components/ui/button"
@@ -15,6 +15,7 @@ const nav = [
   { to: "/approvals", label: "Approvals", icon: Inbox },
   { to: "/reorder", label: "Reorder", icon: ShoppingCart },
   { to: "/purchase-orders", label: "Purchase orders", icon: ClipboardList },
+  { to: "/sales-orders", label: "Sales orders", icon: ReceiptText },
   { to: "/activity", label: "Activity", icon: Activity },
   { to: "/channels", label: "Channels", icon: Plug },
 ] as const
