@@ -16,7 +16,7 @@ function ReorderPage() {
   const { data: suppliers = [] } = useSuppliers()
   const groups = new Map<string, Array<ItemSummary>>()
   for (const i of items) {
-    const k = `${i.brand}|${i.supplier ?? ""}`
+    const k = JSON.stringify([i.brand, i.supplier ?? ""])
     groups.set(k, [...(groups.get(k) ?? []), i])
   }
   return (
@@ -28,7 +28,7 @@ function ReorderPage() {
       {!items.length && <Empty>Nothing to reorder.</Empty>}
       <div className="flex flex-col gap-4">
         {[...groups.entries()].map(([key, list]) => {
-          const [brand, supplierName] = key.split("|")
+          const [brand, supplierName] = JSON.parse(key) as [string, string]
           const name = supplierName || "No supplier"
           const s = suppliers.find((x) => x.name === supplierName)
           const cost = list.reduce((acc, i) => acc + i.suggested_reorder_qty * (i.unit_cost ?? 0), 0)

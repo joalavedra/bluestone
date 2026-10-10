@@ -1176,6 +1176,27 @@ impl Service {
             .execute(&mut *tx)
             .await?;
         sqlx::query("INSERT OR IGNORE INTO item_tags (item_id, tag_id) SELECT ?, tag_id FROM item_tags WHERE item_id = ?").bind(target).bind(source).execute(&mut *tx).await?;
+        // Open PO lines follow the merged item; lines on the same PO are combined.
+        sqlx::query(
+            "UPDATE po_lines AS t SET quantity = t.quantity + s.quantity, received = t.received + s.received
+             FROM po_lines AS s WHERE s.item_id = ?1 AND t.item_id = ?2 AND s.po_id = t.po_id",
+        )
+        .bind(source)
+        .bind(target)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "DELETE FROM po_lines WHERE item_id = ?1 AND po_id IN (SELECT po_id FROM po_lines WHERE item_id = ?2)",
+        )
+        .bind(source)
+        .bind(target)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("UPDATE po_lines SET item_id = ? WHERE item_id = ?")
+            .bind(target)
+            .bind(source)
+            .execute(&mut *tx)
+            .await?;
         sqlx::query("UPDATE notes SET item_id = ? WHERE item_id = ?")
             .bind(target)
             .bind(source)

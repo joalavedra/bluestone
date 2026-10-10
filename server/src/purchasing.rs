@@ -439,18 +439,41 @@ impl Service {
         }
         let master = mode == "master";
         let wh = match (master, warehouse) {
+            // Drafted before the brand had warehouses: receive into its first one and remember it.
             (true, None) => {
-                return invalid(format!("PO #{id} has no warehouse to receive into"));
+                let first: Option<(i64,)> = sqlx::query_as(
+                    "SELECT id FROM warehouses WHERE brand_id = ? ORDER BY id LIMIT 1",
+                )
+                .bind(brand_id)
+                .fetch_optional(&self.pool)
+                .await?;
+                let Some((w,)) = first else {
+                    return invalid(format!("PO #{id} has no warehouse to receive into"));
+                };
+                sqlx::query("UPDATE purchase_orders SET warehouse_id = ? WHERE id = ?")
+                    .bind(w)
+                    .bind(id)
+                    .execute(&self.pool)
+                    .await?;
+                Some(w)
             }
             (_, w) => w,
         };
         let mut tx = self.pool.begin().await?;
         for (line, item, qty) in &receipts {
-            sqlx::query("UPDATE po_lines SET received = received + ? WHERE id = ?")
-                .bind(qty)
-                .bind(line)
-                .execute(&mut *tx)
-                .await?;
+            // Guarded so repeated lines or concurrent receipts can never exceed the ordered quantity.
+            let r = sqlx::query(
+                "UPDATE po_lines SET received = received + ?1 WHERE id = ?2 AND received + ?1 <= quantity",
+            )
+            .bind(qty)
+            .bind(line)
+            .execute(&mut *tx)
+            .await?;
+            if r.rows_affected() == 0 {
+                return Err(ServiceError::Conflict(format!(
+                    "receiving {qty} more of item {item} would exceed what PO #{id} ordered; reload and retry"
+                )));
+            }
             if let (true, Some(wh)) = (master, wh) {
                 crate::ledger::record_receipt(&mut tx, *item, wh, *qty, id, &who.name).await?;
             }

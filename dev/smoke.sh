@@ -67,3 +67,9 @@ test "$(qty)" = 70
 curl "${H[@]}" -X POST "$API/api/purchase-orders/$PO/receive" -d "{}" | jq -c '{received_units, status: .po.status}'
 echo "store after full receipt: $(qty)"
 test "$(qty)" = 84
+# Repeated lines cannot receive more than was ordered.
+PO2=$(curl "${H[@]}" -X POST "$API/api/purchase-orders" -d '{"brand":"Northwind Coffee","lines":[{"item":"NW-ESP-250","quantity":5}]}' | jq .id)
+curl "${H[@]}" -X POST "$API/api/purchase-orders/$PO2/approve" >/dev/null
+CODE=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $HUMAN" -H "Content-Type: application/json" -X POST "$API/api/purchase-orders/$PO2/receive" -d '{"lines":[{"item":"NW-ESP-250","quantity":3},{"item":"NW-ESP-250","quantity":3}]}')
+echo "over-receipt: HTTP $CODE, store $(qty)"
+test "$CODE" = 409 && test "$(qty)" = 84
