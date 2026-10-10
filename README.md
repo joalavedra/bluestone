@@ -20,11 +20,17 @@ target/debug/mock_shopify &                      # http://127.0.0.1:8788
 docker compose -f ../dev/docker-compose.yml up -d  # wait ~2 min for install
 export PRESTASHOP_DEV_KEY=$(../dev/prestashop-key.sh)
 
+# Optional: Faire wholesale (mock External API v2, same SKUs as the Shopify mock)
+target/debug/mock_faire &                        # http://127.0.0.1:8789
+export FAIRE_DEV_CREDENTIAL="ZGV2OmRldg==:faire_dev_mock"
+
 # 3. Wire channels, tokens, sync
 target/debug/bluestone channel add --brand "Northwind Coffee" --kind shopify --name shopify-dev \
   --base-url http://127.0.0.1:8788 --credential-env SHOPIFY_DEV_TOKEN
 target/debug/bluestone channel add --brand "Northwind Coffee" --kind prestashop --name presta-dev \
   --base-url http://localhost:8080 --credential-env PRESTASHOP_DEV_KEY
+target/debug/bluestone channel add --brand "Northwind Coffee" --kind faire --name faire-wholesale \
+  --base-url http://127.0.0.1:8789 --credential-env FAIRE_DEV_CREDENTIAL
 target/debug/bluestone token create --name joan --kind human --scopes admin   # paste into the UI
 target/debug/bluestone token create --name claude-code                        # agent: read,organise,propose
 target/debug/bluestone sync
@@ -51,9 +57,13 @@ Agent tokens can read, organise (tags, suppliers, reorder settings, notes, merge
 
 Create a dev store in your Partner dashboard → custom app with `read_products, write_products, read_inventory, write_inventory, read_locations, read_orders` → `bluestone channel add --kind shopify --base-url https://<shop>.myshopify.com --credential-env SHOPIFY_TOKEN`.
 
+## Real Faire brand
+
+Register an app at developers.faire.com, run the OAuth flow to get an access token for the brand, then `export FAIRE_TOKEN="<base64 applicationId:applicationSecret>:<access token>"` and `bluestone channel add --kind faire --base-url https://www.faire.com --credential-env FAIRE_TOKEN`. Bluestone tracks the **wholesale** price for Faire listings.
+
 ## Checks
 
 ```bash
-cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test && ../dev/smoke.sh
+cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test && ../dev/smoke.sh && ../dev/smoke-faire.sh
 cd web && npx tsr generate && npm run typecheck && npm run lint && npm run build
 ```
