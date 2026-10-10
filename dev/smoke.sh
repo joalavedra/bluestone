@@ -73,3 +73,18 @@ curl "${H[@]}" -X POST "$API/api/purchase-orders/$PO2/approve" >/dev/null
 CODE=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $HUMAN" -H "Content-Type: application/json" -X POST "$API/api/purchase-orders/$PO2/receive" -d '{"lines":[{"item":"NW-ESP-250","quantity":3},{"item":"NW-ESP-250","quantity":3}]}')
 echo "over-receipt: HTTP $CODE, store $(qty)"
 test "$CODE" = 409 && test "$(qty)" = 84
+
+echo "--- sales orders: agent proposes from an email, human confirms (reserves), fulfils (ledger sale)"
+OUT=$(mcp '{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"propose_sales_order","arguments":{"brand":"Northwind Coffee","customer":"Cafe Roma","external_ref":"PO-7781","source":"email from orders@caferoma.it","warehouse":"Barcelona warehouse","lines":[{"item":"NW-ESP-250","quantity":10,"unit_price":5.5}]}}}' | sed -n 's/^data: //p')
+SO=$(echo "$OUT" | jq -r '.result.content[0].text' | jq -r .id)
+echo "agent proposed SO #$SO"
+CODE=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $AGENT" -X POST "$API/api/sales-orders/$SO/confirm")
+echo "agent confirm: HTTP $CODE"; test "$CODE" = 403
+curl "${H[@]}" -X POST "$API/api/sales-orders/$SO/confirm" -d '{}' | jq -c '{id, status, units, total, warnings}'
+curl "${H[@]}" "$API/api/items?query=NW-ESP-250" | jq -c '.[0] | {on_hand, reserved, available}'
+echo "store after confirm (reserved units withheld): $(qty)"
+test "$(qty)" = 74
+curl "${H[@]}" -X POST "$API/api/sales-orders/$SO/fulfil" -d '{}' | jq -c '{status}'
+test "$(curl "${H[@]}" "$API/api/items?query=NW-ESP-250" | jq '.[0].reserved')" = 0
+echo "store after fulfil: $(qty)"
+test "$(qty)" = 74

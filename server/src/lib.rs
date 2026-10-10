@@ -6,4 +6,5 @@ pub mod forecast;
 pub mod ledger;
 pub mod mcp;
 pub mod purchasing;
+pub mod sales;
 pub mod service;

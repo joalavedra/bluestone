@@ -37,7 +37,7 @@ Status: ✅ in v0 · 🟡 partial · 🔜 planned (see ROADMAP.md) · ✖ out of
 | Per-agent tokens & scopes | – | `read / organise / propose / approve / admin`, hashed tokens | ✅ |
 | Agents can't approve | – | Approval is human-only (REST/UI) | ✅ |
 | Policy rules (auto-approve under limits) | – | Valet-style rules: e.g. auto-apply stock corrections < 5 units | 🔜 phase 1 |
-| Order photo → sales order | ✔ | – | ✖ (agent harness does intake) |
+| Order photo → sales order | ✔ | Agent reads the email/photo and calls `propose_sales_order`; human confirms (reserves stock) and fulfils (ledger sale) | ✅ |
 
 ## Writes to stores
 

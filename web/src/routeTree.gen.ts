@@ -16,6 +16,7 @@ import { Route as ChannelsRouteImport } from './routes/channels'
 import { Route as InventoryRouteImport } from './routes/inventory'
 import { Route as PurchaseOrdersRouteImport } from './routes/purchase-orders'
 import { Route as ReorderRouteImport } from './routes/reorder'
+import { Route as SalesOrdersRouteImport } from './routes/sales-orders'
 import { Route as ItemsItemIdRouteImport } from './routes/items.$itemId'
 
 const IndexRoute = IndexRouteImport.update({
@@ -53,6 +54,11 @@ const ReorderRoute = ReorderRouteImport.update({
   path: '/reorder',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SalesOrdersRoute = SalesOrdersRouteImport.update({
+  id: '/sales-orders',
+  path: '/sales-orders',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ItemsItemIdRoute = ItemsItemIdRouteImport.update({
   id: '/items/$itemId',
   path: '/items/$itemId',
@@ -67,6 +73,7 @@ export interface FileRoutesByFullPath {
   '/inventory': typeof InventoryRoute
   '/purchase-orders': typeof PurchaseOrdersRoute
   '/reorder': typeof ReorderRoute
+  '/sales-orders': typeof SalesOrdersRoute
   '/items/$itemId': typeof ItemsItemIdRoute
 }
 export interface FileRoutesByTo {
@@ -77,6 +84,7 @@ export interface FileRoutesByTo {
   '/inventory': typeof InventoryRoute
   '/purchase-orders': typeof PurchaseOrdersRoute
   '/reorder': typeof ReorderRoute
+  '/sales-orders': typeof SalesOrdersRoute
   '/items/$itemId': typeof ItemsItemIdRoute
 }
 export interface FileRoutesById {
@@ -88,6 +96,7 @@ export interface FileRoutesById {
   '/inventory': typeof InventoryRoute
   '/purchase-orders': typeof PurchaseOrdersRoute
   '/reorder': typeof ReorderRoute
+  '/sales-orders': typeof SalesOrdersRoute
   '/items/$itemId': typeof ItemsItemIdRoute
 }
 export interface FileRouteTypes {
@@ -100,6 +109,7 @@ export interface FileRouteTypes {
     | '/inventory'
     | '/purchase-orders'
     | '/reorder'
+    | '/sales-orders'
     | '/items/$itemId'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -110,6 +120,7 @@ export interface FileRouteTypes {
     | '/inventory'
     | '/purchase-orders'
     | '/reorder'
+    | '/sales-orders'
     | '/items/$itemId'
   id:
     | '__root__'
@@ -120,6 +131,7 @@ export interface FileRouteTypes {
     | '/inventory'
     | '/purchase-orders'
     | '/reorder'
+    | '/sales-orders'
     | '/items/$itemId'
   fileRoutesById: FileRoutesById
 }
@@ -131,6 +143,7 @@ export interface RootRouteChildren {
   InventoryRoute: typeof InventoryRoute
   PurchaseOrdersRoute: typeof PurchaseOrdersRoute
   ReorderRoute: typeof ReorderRoute
+  SalesOrdersRoute: typeof SalesOrdersRoute
   ItemsItemIdRoute: typeof ItemsItemIdRoute
 }
 
@@ -185,6 +198,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ReorderRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/sales-orders': {
+      id: '/sales-orders'
+      path: '/sales-orders'
+      fullPath: '/sales-orders'
+      preLoaderRoute: typeof SalesOrdersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/items/$itemId': {
       id: '/items/$itemId'
       path: '/items/$itemId'
@@ -203,6 +223,7 @@ const rootRouteChildren: RootRouteChildren = {
   InventoryRoute: InventoryRoute,
   PurchaseOrdersRoute: PurchaseOrdersRoute,
   ReorderRoute: ReorderRoute,
+  SalesOrdersRoute: SalesOrdersRoute,
   ItemsItemIdRoute: ItemsItemIdRoute,
 }
 export const routeTree = rootRouteImport

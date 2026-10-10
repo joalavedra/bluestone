@@ -504,6 +504,45 @@ impl BluestoneMcp {
     }
 
     #[tool(
+        description = "Propose a sales / wholesale order you read from an email, message or photo of an order sheet. Include `source` (where it came from) and the customer's reference. It waits for a human to confirm; confirming reserves the stock. The response lists lines with current availability and warnings for shortfalls."
+    )]
+    async fn propose_sales_order(
+        &self,
+        ctx: RequestContext<RoleServer>,
+        Parameters(a): Parameters<crate::sales::ProposeSalesOrder>,
+    ) -> Result<CallToolResult, McpError> {
+        let p = self.principal(&ctx)?;
+        done(self.svc.propose_sales_order(&p, &a).await)
+    }
+
+    #[tool(
+        description = "List sales orders (default: open = proposed + confirmed) with lines, availability and shortfall warnings."
+    )]
+    async fn list_sales_orders(
+        &self,
+        ctx: RequestContext<RoleServer>,
+        Parameters(a): Parameters<crate::sales::SoListArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let p = self.principal(&ctx)?;
+        let status = a.status.unwrap_or_else(|| "open".into());
+        done(
+            self.svc
+                .sales_orders(&p, Some(&status), a.brand.as_deref())
+                .await,
+        )
+    }
+
+    #[tool(description = "Get one sales order with its lines.")]
+    async fn get_sales_order(
+        &self,
+        ctx: RequestContext<RoleServer>,
+        Parameters(a): Parameters<crate::sales::SoIdArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let p = self.principal(&ctx)?;
+        done(self.svc.sales_order(&p, a.id).await)
+    }
+
+    #[tool(
         description = "List purchase orders (default: open ones) with lines, received quantities and cost."
     )]
     async fn list_purchase_orders(
