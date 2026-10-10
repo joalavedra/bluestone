@@ -1,6 +1,7 @@
 //! Domain logic shared by the REST API, the MCP server and the CLI.
 use crate::auth::{Principal, Scope};
 use crate::connectors::{self, ListingRef};
+use anyhow::Context;
 use chrono::{Duration, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -33,15 +34,15 @@ impl From<sqlx::Error> for ServiceError {
 
 pub type SResult<T> = Result<T, ServiceError>;
 
-fn invalid<T>(msg: impl Into<String>) -> SResult<T> {
+pub(crate) fn invalid<T>(msg: impl Into<String>) -> SResult<T> {
     Err(ServiceError::Invalid(msg.into()))
 }
 
-fn now() -> String {
+pub(crate) fn now() -> String {
     Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
-fn days_ago(d: i64) -> String {
+pub(crate) fn days_ago(d: i64) -> String {
     (Utc::now() - Duration::days(d))
         .format("%Y-%m-%dT%H:%M:%SZ")
         .to_string()
@@ -73,6 +74,8 @@ pub struct BrandSummary {
     pub low_stock_count: i64,
     pub out_of_stock_count: i64,
     pub stock_value: f64,
+    /// `mirror`: the stores own stock. `master`: Bluestone's ledger owns stock and pushes it out.
+    pub stock_mode: String,
     pub channels: Vec<ChannelInfo>,
 }
 
@@ -185,7 +188,10 @@ impl From<ItemRow> for ItemSummary {
 const ITEM_SELECT: &str = r#"
 SELECT i.id, b.name AS brand, i.sku, i.name, s.name AS supplier, s.lead_time_days AS supplier_lead,
   i.reorder_point, i.target_stock, i.lead_time_days, i.unit_cost,
-  COALESCE((SELECT SUM(ls.quantity) FROM listing_stock ls JOIN listings l ON l.id = ls.listing_id WHERE l.item_id = i.id), 0) AS on_hand,
+  CASE WHEN b.stock_mode = 'master'
+    THEN COALESCE((SELECT SUM(s.delta) FROM stock_ledger s WHERE s.item_id = i.id), 0)
+    ELSE COALESCE((SELECT SUM(ls.quantity) FROM listing_stock ls JOIN listings l ON l.id = ls.listing_id WHERE l.item_id = i.id), 0)
+  END AS on_hand,
   COALESCE((SELECT SUM(o.quantity) FROM order_lines o JOIN listings l ON l.id = o.listing_id WHERE l.item_id = i.id AND o.ordered_at >= ?1), 0) AS sold_30d,
   (SELECT GROUP_CONCAT(t.name) FROM item_tags it JOIN tags t ON t.id = it.tag_id WHERE it.item_id = i.id) AS tags,
   (SELECT GROUP_CONCAT(c.kind || ':' || c.name) FROM listings l JOIN channels c ON c.id = l.channel_id WHERE l.item_id = i.id) AS channels,
@@ -253,6 +259,10 @@ pub struct ItemDetail {
     pub notes: Vec<Note>,
     pub sales_by_day: Vec<DayPoint>,
     pub proposals: Vec<ProposalView>,
+    pub stock_mode: String,
+    /// Master mode only: ledger quantity per warehouse and the latest ledger entries.
+    pub warehouses: Vec<crate::ledger::StockLevel>,
+    pub ledger: Vec<crate::ledger::LedgerEntry>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -264,7 +274,8 @@ pub struct ProposalView {
     pub item_sku: Option<String>,
     pub item_name: Option<String>,
     pub brand: Option<String>,
-    pub listing_id: i64,
+    /// None for ledger proposals, which target a warehouse.
+    pub listing_id: Option<i64>,
     pub channel: String,
     pub before: Value,
     pub after: Value,
@@ -286,7 +297,7 @@ struct ProposalRow {
     item_sku: Option<String>,
     item_name: Option<String>,
     brand: Option<String>,
-    listing_id: i64,
+    listing_id: Option<i64>,
     channel: String,
     before_json: String,
     after_json: String,
@@ -341,7 +352,7 @@ fn policy_warnings(kind: &str, before: &Value, after: &Value) -> Vec<String> {
                 }
             }
         }
-        "stock_adjustment" => {
+        "stock_adjustment" | "ledger_adjustment" => {
             if let (Some(b), Some(a)) = (before["quantity"].as_i64(), after["quantity"].as_i64()) {
                 if a < b && b - a >= 50 {
                     w.push(format!("removes {} units", b - a));
@@ -363,11 +374,11 @@ fn policy_warnings(kind: &str, before: &Value, after: &Value) -> Vec<String> {
 
 const PROPOSAL_SELECT: &str = r#"
 SELECT p.id, p.kind, p.status, p.item_id, i.sku AS item_sku, i.name AS item_name, b.name AS brand,
-  p.listing_id, c.kind || ':' || c.name AS channel, p.before_json, p.after_json, p.rationale, p.actor,
+  p.listing_id, COALESCE(c.kind || ':' || c.name, 'bluestone:ledger') AS channel, p.before_json, p.after_json, p.rationale, p.actor,
   p.decided_by, p.decided_at, p.error, p.created_at
 FROM proposals p
-JOIN listings l ON l.id = p.listing_id
-JOIN channels c ON c.id = l.channel_id
+LEFT JOIN listings l ON l.id = p.listing_id
+LEFT JOIN channels c ON c.id = l.channel_id
 LEFT JOIN items i ON i.id = p.item_id
 LEFT JOIN brands b ON b.id = i.brand_id"#;
 
@@ -440,6 +451,9 @@ pub struct SyncReport {
     pub listings: usize,
     pub new_items: usize,
     pub order_lines: usize,
+    /// Present for brands in master mode: what the ledger did after the sync.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub master: Option<crate::ledger::Reconcile>,
 }
 
 // ---------- inputs ----------
@@ -632,7 +646,16 @@ impl Service {
         .fetch_all(&self.pool)
         .await?;
         let proposals = self.proposals_where("p.item_id = ?", Some(id), 20).await?;
+        let stock_mode = self.item_stock_mode(id).await?;
+        let (warehouses, ledger) = if stock_mode == "master" {
+            (self.stock_levels(id).await?, self.ledger(id, 50).await?)
+        } else {
+            (Vec::new(), Vec::new())
+        };
         Ok(ItemDetail {
+            stock_mode,
+            warehouses,
+            ledger,
             summary: row.into(),
             listings,
             notes,
@@ -731,15 +754,15 @@ impl Service {
     }
 
     pub async fn list_brands(&self) -> SResult<Vec<BrandSummary>> {
-        let brands: Vec<(i64, String)> =
-            sqlx::query_as("SELECT id, name FROM brands ORDER BY name")
+        let brands: Vec<(i64, String, String)> =
+            sqlx::query_as("SELECT id, name, stock_mode FROM brands ORDER BY name")
                 .fetch_all(&self.pool)
                 .await?;
         let items = self.all_items().await?;
         let channels = self.channels().await?;
         Ok(brands
             .into_iter()
-            .map(|(id, name)| {
+            .map(|(id, name, stock_mode)| {
                 let mine: Vec<&ItemSummary> = items.iter().filter(|i| i.brand == name).collect();
                 BrandSummary {
                     id,
@@ -747,6 +770,7 @@ impl Service {
                     low_stock_count: mine.iter().filter(|i| i.status == "low").count() as i64,
                     out_of_stock_count: mine.iter().filter(|i| i.status == "out").count() as i64,
                     stock_value: stock_value(&mine),
+                    stock_mode,
                     channels: channels
                         .iter()
                         .filter(|(b, _)| *b == id)
@@ -1095,7 +1119,11 @@ impl Service {
         if sb != tb {
             return invalid("can only merge items of the same brand");
         }
+        let master = self.item_stock_mode(target).await? == "master";
         let mut tx = self.pool.begin().await?;
+        if master {
+            crate::ledger::merge_ledgers(&mut tx, source, target, &who.name).await?;
+        }
         sqlx::query("UPDATE listings SET item_id = ? WHERE item_id = ?")
             .bind(target)
             .bind(source)
@@ -1112,6 +1140,9 @@ impl Service {
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;
+        if master {
+            self.push_stock(sb.0, Some(target), None).await?;
+        }
         let (s, t) = (
             self.item_label(source).await?,
             self.item_label(target).await?,
@@ -1157,20 +1188,21 @@ impl Service {
     }
 
     #[allow(clippy::too_many_arguments)]
-    async fn insert_proposal(
+    pub(crate) async fn insert_proposal(
         &self,
         who: &Principal,
         kind: &str,
         item_id: i64,
-        listing_id: i64,
+        listing_id: Option<i64>,
         before: Value,
         after: Value,
         rationale: Option<&str>,
     ) -> SResult<ProposalView> {
         let dupe: Option<(i64,)> = sqlx::query_as(
-            "SELECT id FROM proposals WHERE status = 'pending' AND kind = ? AND listing_id = ? AND after_json = ?",
+            "SELECT id FROM proposals WHERE status = 'pending' AND kind = ? AND item_id = ? AND listing_id IS ? AND after_json = ?",
         )
         .bind(kind)
+        .bind(item_id)
         .bind(listing_id)
         .bind(after.to_string())
         .fetch_optional(&self.pool)
@@ -1211,6 +1243,9 @@ impl Service {
     pub async fn propose_stock(&self, who: &Principal, p: &ProposeStock) -> SResult<ProposalView> {
         who.require(Scope::Propose)?;
         let item_id = self.resolve_item(&p.item, p.brand.as_deref()).await?;
+        if self.item_stock_mode(item_id).await? == "master" {
+            return self.propose_ledger_stock(who, item_id, p).await;
+        }
         let (listing_id, _, _, _) = self.pick_listing(item_id, p.channel.as_deref()).await?;
         let rows: Vec<(i64, String, i64)> = sqlx::query_as(
             "SELECT lo.id, lo.name, ls.quantity FROM listing_stock ls JOIN locations lo ON lo.id = ls.location_id
@@ -1252,7 +1287,7 @@ impl Service {
             who,
             "stock_adjustment",
             item_id,
-            listing_id,
+            Some(listing_id),
             json!({ "location_id": loc_id, "location": loc_name, "quantity": current }),
             json!({ "location_id": loc_id, "location": loc_name, "quantity": quantity }),
             p.rationale.as_deref(),
@@ -1275,7 +1310,7 @@ impl Service {
             who,
             "price_change",
             item_id,
-            listing_id,
+            Some(listing_id),
             json!({ "price": price }),
             json!({ "price": new }),
             p.rationale.as_deref(),
@@ -1302,7 +1337,7 @@ impl Service {
             who,
             "listing_status",
             item_id,
-            listing_id,
+            Some(listing_id),
             json!({ "status": current }),
             json!({ "status": status }),
             p.rationale.as_deref(),
@@ -1406,6 +1441,10 @@ impl Service {
     }
 
     async fn apply(&self, p: &ProposalView) -> anyhow::Result<()> {
+        if self.apply_ledger(p).await? {
+            return Ok(());
+        }
+        let listing_id = p.listing_id.context("proposal has no listing")?;
         #[derive(FromRow)]
         struct Row {
             kind: String,
@@ -1419,7 +1458,7 @@ impl Service {
             "SELECT c.kind, c.base_url, c.credential_env, l.external_product_id, l.external_variant_id, l.inventory_ref
              FROM listings l JOIN channels c ON c.id = l.channel_id WHERE l.id = ?",
         )
-        .bind(p.listing_id)
+        .bind(listing_id)
         .fetch_one(&self.pool)
         .await?;
         let credential = std::env::var(&r.credential_env)
@@ -1438,7 +1477,7 @@ impl Service {
                 let (ext, stock_ref): (String, Option<String>) = sqlx::query_as(
                     "SELECT lo.external_id, ls.stock_ref FROM listing_stock ls JOIN locations lo ON lo.id = ls.location_id WHERE ls.listing_id = ? AND ls.location_id = ?",
                 )
-                .bind(p.listing_id)
+                .bind(listing_id)
                 .bind(loc_id)
                 .fetch_one(&self.pool)
                 .await?;
@@ -1447,18 +1486,18 @@ impl Service {
                 sqlx::query("UPDATE listing_stock SET quantity = ?, updated_at = ? WHERE listing_id = ? AND location_id = ?")
                     .bind(qty)
                     .bind(now())
-                    .bind(p.listing_id)
+                    .bind(listing_id)
                     .bind(loc_id)
                     .execute(&self.pool)
                     .await?;
-                self.snapshot(p.listing_id).await?;
+                self.snapshot(listing_id).await?;
             }
             "price_change" => {
                 let price = p.after["price"].as_f64().unwrap_or_default();
                 conn.set_price(&target, price).await?;
                 sqlx::query("UPDATE listings SET price = ? WHERE id = ?")
                     .bind(price)
-                    .bind(p.listing_id)
+                    .bind(listing_id)
                     .execute(&self.pool)
                     .await?;
             }
@@ -1476,7 +1515,7 @@ impl Service {
                        (SELECT channel_id, external_product_id FROM listings WHERE id = ?)",
                 )
                 .bind(local)
-                .bind(p.listing_id)
+                .bind(listing_id)
                 .execute(&self.pool)
                 .await?;
             }
@@ -1572,13 +1611,24 @@ impl Service {
             .execute(&self.pool)
             .await?;
         match res {
-            Ok(r) => {
+            Ok(mut r) => {
+                r.master = self.reconcile(channel_id).await?;
+                let master = r
+                    .master
+                    .as_ref()
+                    .map(|m| {
+                        format!(
+                            "; ledger: {} sold, {} pushed, {} drift, {} oversold",
+                            m.units_sold, m.pushed, m.drift, m.oversold
+                        )
+                    })
+                    .unwrap_or_default();
                 self.log(
                     who,
                     "sync",
                     Some(("channel", channel_id)),
                     format!(
-                        "synced {}: {} listings, {} new items, {} order lines",
+                        "synced {}: {} listings, {} new items, {} order lines{master}",
                         r.channel, r.listings, r.new_items, r.order_lines
                     ),
                 )
@@ -1764,6 +1814,7 @@ impl Service {
             listings: catalog.listings.len(),
             new_items,
             order_lines: orders.len(),
+            master: None,
         })
     }
 }
@@ -1778,7 +1829,13 @@ fn stock_value(items: &[&ItemSummary]) -> f64 {
 
 pub fn describe(p: &ProposalView) -> String {
     match p.kind.as_str() {
-        "stock_adjustment" => format!(
+        "stock_transfer" => format!(
+            "move {} from {} to {}",
+            p.after["quantity"],
+            p.after["from"].as_str().unwrap_or("?"),
+            p.after["to"].as_str().unwrap_or("?")
+        ),
+        "stock_adjustment" | "ledger_adjustment" => format!(
             "stock {} → {} at {}",
             p.before["quantity"],
             p.after["quantity"],

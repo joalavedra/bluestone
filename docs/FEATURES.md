@@ -47,7 +47,8 @@ Status: ✅ in v0 · 🟡 partial · 🔜 planned (see ROADMAP.md) · ✖ out of
 | Price changes | ✔ | Shopify variant price, PrestaShop product/combination price | ✅ |
 | Listing status | – | active / draft / archived | ✅ |
 | Purchase orders | ✔ | Draft POs per supplier from the reorder list, email/PDF | 🔜 phase 1 |
-| Cross-channel stock sync | ✔ | Bluestone as stock master, pushes available qty to every channel | 🔜 phase 2 |
+| Cross-channel stock sync | ✔ | Per-brand master mode: stock ledger + warehouses, pushes quantity to every channel, drift & oversell detection | ✅ |
+| Stock transfers | ✔ | Between warehouses, proposed by the agent, recorded as two ledger legs | ✅ |
 
 ## Human UI
 
