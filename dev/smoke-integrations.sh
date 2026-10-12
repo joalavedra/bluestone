@@ -49,6 +49,10 @@ echo "edit without a key keeps the stored one: $(try "$(jq -c 'del(.secret)' <<<
 test "$(try "$(jq -c 'del(.secret)' <<<"$SHOP")" | jq .ok)" = true
 test "$(code "$HUMAN" integrations/test "$(jq -c '.credential_ref = "X"' <<<"$SHOP")")" = 422 && jq -r .error "$WORK/body"
 test "$(code "$HUMAN" integrations/test "$(jq -c 'del(.secret) | .credential_ref = "secret:1"' <<<"$SHOP")")" = 422
+test "$(code "$HUMAN" integrations/test "$(jq -c 'del(.secret) | .fields.base_url = "http://127.0.0.1:9"' <<<"$SHOP")")" = 422 && jq -r .error "$WORK/body"
+secrets() { python3 -c "import sqlite3; print(sqlite3.connect('$WORK/smoke.db').execute('SELECT group_concat(id) FROM secrets').fetchone()[0])"; }
+curl "${H[@]}" -X POST $API/integrations -d "$SHOP" >/dev/null
+echo "re-saved with a new key, stored keys: $(secrets)"; test "$(secrets)" = 2
 
 echo "--- QuickBooks with a pasted token, Holded through an env var"
 QB='{"connector":"quickbooks","brand":"Northwind Coffee","fields":{"realm":"9130","income_account":"79","expense_account":"80","base_url":"http://127.0.0.1:18990"},"secret":"qbo_dev_mock"}'

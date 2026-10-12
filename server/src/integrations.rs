@@ -427,10 +427,10 @@ impl Service {
         c: &Connector,
         brand: &str,
         vals: &BTreeMap<&'static str, String>,
-    ) -> SResult<Option<(String, i64)>> {
+    ) -> SResult<Option<(String, i64, String)>> {
         Ok(if c.category == "sales_channel" {
             sqlx::query_as(
-                "SELECT c.credential_env, c.id FROM channels c JOIN brands b ON b.id = c.brand_id
+                "SELECT c.credential_env, c.id, c.base_url FROM channels c JOIN brands b ON b.id = c.brand_id
                  WHERE b.name = ? AND c.name = ? AND c.kind = ?",
             )
             .bind(brand)
@@ -440,7 +440,7 @@ impl Service {
             .await?
         } else {
             sqlx::query_as(
-                "SELECT a.credential_env, 0 FROM accounting_connections a JOIN brands b ON b.id = a.brand_id
+                "SELECT a.credential_env, 0, a.base_url FROM accounting_connections a JOIN brands b ON b.id = a.brand_id
                  WHERE b.name = ? AND a.kind = ? AND a.active = 1",
             )
             .bind(brand)
@@ -470,7 +470,12 @@ impl Service {
             (Some(p), None) => Cred::Pasted(p.to_owned()),
             (None, Some(r)) => Cred::Reference(r.to_owned()),
             (None, None) => match self.existing_credential(c, i.brand.trim(), vals).await? {
-                Some((reference, channel_id)) => Cred::Existing {
+                Some((_, _, saved_url)) if vals.get("base_url") != Some(&saved_url) => {
+                    return invalid(
+                        "the address changed: paste the key again (or reconnect) so the saved one isn't sent to a new address",
+                    );
+                }
+                Some((reference, channel_id, _)) => Cred::Existing {
                     reference,
                     channel_id,
                 },
@@ -507,13 +512,17 @@ impl Service {
             };
             let base_url = vals.get("base_url").cloned().unwrap_or_default();
             let msg = if c.category == "sales_channel" {
-                let catalog = crate::connectors::build(c.id, &base_url, token)?
-                    .fetch_catalog()
-                    .await?;
+                let conn = crate::connectors::build(c.id, &base_url, token)?;
+                let catalog = conn.fetch_catalog().await?;
+                let orders = conn
+                    .fetch_orders(&crate::service::days_ago(7))
+                    .await
+                    .map_err(|e| e.context("products work, but orders can't be read"))?;
                 format!(
-                    "{} listings in {} locations",
+                    "{} listings in {} locations, {} order lines in the last 7 days",
                     catalog.listings.len(),
-                    catalog.locations.len()
+                    catalog.locations.len(),
+                    orders.len()
                 )
             } else {
                 accounting::build(Config {
@@ -554,6 +563,10 @@ impl Service {
         let vals = values(&c, i)?;
         let cred = self.credential(&c, i, &vals).await?;
         let needs_oauth = matches!(cred, Cred::Oauth);
+        let previous = self
+            .existing_credential(&c, i.brand.trim(), &vals)
+            .await?
+            .map(|(reference, ..)| reference);
         let credential_env = match cred {
             Cred::Pasted(s) => credentials::store_secret(&self.pool, &s)
                 .await
@@ -570,7 +583,7 @@ impl Service {
                     kind: c.id.into(),
                     name: vals["name"].clone(),
                     base_url: vals["base_url"].clone(),
-                    credential_env,
+                    credential_env: credential_env.clone(),
                 },
             )
             .await
@@ -583,7 +596,7 @@ impl Service {
                     kind: c.id.into(),
                     base_url: vals.get("base_url").cloned(),
                     realm: vals.get("realm").cloned(),
-                    credential_env,
+                    credential_env: credential_env.clone(),
                     income_account: vals.get("income_account").cloned(),
                     expense_account: vals.get("expense_account").cloned(),
                 },
@@ -591,8 +604,15 @@ impl Service {
             .await
             .map(|id| ("accounting", id))
         };
-        // Drops the key just stored if saving failed, and any key this save replaced.
-        credentials::prune_secrets(&self.pool).await?;
+        // Drops the key just stored if saving failed, and the key this save replaced. Only these
+        // two are touched, so a concurrent save's freshly stored key is never removed.
+        let stale = match &saved {
+            Ok(_) => previous.filter(|p| *p != credential_env),
+            Err(_) => Some(credential_env.clone()),
+        };
+        if let Some(reference) = stale {
+            credentials::drop_unused_secret(&self.pool, &reference).await?;
+        }
         let (kind, id) = saved?;
         Ok(Saved {
             kind,

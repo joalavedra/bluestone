@@ -66,14 +66,22 @@ pub async fn store_secret(pool: &SqlitePool, plain: &str) -> Result<String> {
 }
 
 /// Deletes pasted keys no channel or accounting connection points to any more.
-pub async fn prune_secrets(pool: &SqlitePool) -> Result<u64> {
-    Ok(sqlx::query(
-        "DELETE FROM secrets WHERE 'secret:' || id NOT IN (
-           SELECT credential_env FROM channels UNION SELECT credential_env FROM accounting_connections)",
+/// Deletes the stored key behind a `secret:<id>` reference once no channel or accounting
+/// connection uses it. Other references are left alone.
+pub async fn drop_unused_secret(pool: &SqlitePool, reference: &str) -> Result<()> {
+    let Some(Ok(id)) = reference.strip_prefix(SECRET_PREFIX).map(str::parse::<i64>) else {
+        return Ok(());
+    };
+    sqlx::query(
+        "DELETE FROM secrets WHERE id = ?2 AND NOT EXISTS (
+           SELECT 1 FROM channels WHERE credential_env = ?1
+           UNION ALL SELECT 1 FROM accounting_connections WHERE credential_env = ?1)",
     )
+    .bind(reference)
+    .bind(id)
     .execute(pool)
-    .await?
-    .rows_affected())
+    .await?;
+    Ok(())
 }
 
 async fn secret(pool: &SqlitePool, id: &str) -> Result<String> {
