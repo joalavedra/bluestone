@@ -78,11 +78,13 @@ async fn nango(spec: &str) -> Result<String> {
         .split_once('/')
         .context("expected nango:<integration>/<connection>")?;
     let host = std::env::var("NANGO_HOST").unwrap_or_else(|_| "http://localhost:3003".into());
+    let mut url = reqwest::Url::parse(host.trim_end_matches('/'))?;
+    url.path_segments_mut()
+        .map_err(|_| anyhow!("NANGO_HOST is not a base URL"))?
+        .push("connections")
+        .push(connection);
     let v: Value = reqwest::Client::new()
-        .get(format!(
-            "{}/connections/{connection}",
-            host.trim_end_matches('/')
-        ))
+        .get(url)
         .query(&[("provider_config_key", integration)])
         .bearer_auth(env("NANGO_SECRET_KEY")?)
         .send()
@@ -132,6 +134,11 @@ fn faire_redirect_url() -> String {
 }
 
 pub async fn faire_authorize_url(pool: &SqlitePool, channel_id: i64) -> Result<String> {
+    sqlx::query(
+        "DELETE FROM oauth_states WHERE created_at < strftime('%Y-%m-%dT%H:%M:%SZ','now','-15 minutes')",
+    )
+    .execute(pool)
+    .await?;
     let state = uuid::Uuid::new_v4().simple().to_string();
     sqlx::query("INSERT INTO oauth_states (state, channel_id) VALUES (?, ?)")
         .bind(&state)
@@ -152,11 +159,11 @@ pub async fn faire_authorize_url(pool: &SqlitePool, channel_id: i64) -> Result<S
     .to_string())
 }
 
-/// Redeems the authorization code (state must be < 15 minutes old and is single-use).
+/// Redeems the authorization code. The state must be < 15 minutes old; it is consumed only once
+/// the exchange succeeds, so a transient Faire error can be retried.
 pub async fn faire_callback(pool: &SqlitePool, state: &str, code: &str) -> Result<i64> {
     let (channel_id,): (i64,) = sqlx::query_as(
-        "DELETE FROM oauth_states WHERE state = ? AND created_at >= strftime('%Y-%m-%dT%H:%M:%SZ','now','-15 minutes')
-         RETURNING channel_id",
+        "SELECT channel_id FROM oauth_states WHERE state = ? AND created_at >= strftime('%Y-%m-%dT%H:%M:%SZ','now','-15 minutes')",
     )
     .bind(state)
     .fetch_optional(pool)
@@ -184,6 +191,13 @@ pub async fn faire_callback(pool: &SqlitePool, state: &str, code: &str) -> Resul
     let token = v["access_token"]
         .as_str()
         .context("Faire returned no access_token")?;
+    let consumed = sqlx::query("DELETE FROM oauth_states WHERE state = ?")
+        .bind(state)
+        .execute(pool)
+        .await?;
+    if consumed.rows_affected() != 1 {
+        return Err(anyhow!("OAuth state was already used"));
+    }
     store(pool, channel_id, token).await?;
     Ok(channel_id)
 }
