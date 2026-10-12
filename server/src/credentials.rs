@@ -3,7 +3,8 @@
 //! - `nango:<integration>/<connection>`: a self-hosted Nango instance (`NANGO_HOST`, `NANGO_SECRET_KEY`)
 //!   that owns the OAuth app and token refresh;
 //! - `oauth`: a token from Bluestone's own connect flow (Faire, which Nango does not support),
-//!   encrypted at rest with `BLUESTONE_SECRET_KEY`.
+//!   encrypted at rest with `BLUESTONE_SECRET_KEY`;
+//! - `secret:<id>`: a key pasted in Settings → Integrations, encrypted the same way.
 
 use aes_gcm::aead::{Aead, AeadCore, OsRng};
 use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
@@ -14,6 +15,7 @@ use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
 
 pub const OAUTH: &str = "oauth";
+pub const SECRET_PREFIX: &str = "secret:";
 const FAIRE_SCOPES: [&str; 6] = [
     "READ_BRAND",
     "READ_PRODUCTS",
@@ -28,17 +30,64 @@ fn env(name: &str) -> Result<String> {
 }
 
 fn cipher() -> Result<Aes256Gcm> {
-    let key = env("BLUESTONE_SECRET_KEY").context("needed to store or read OAuth tokens")?;
+    let key = env("BLUESTONE_SECRET_KEY")
+        .context("needed to store or read pasted keys and OAuth tokens")?;
     let k = Sha256::digest(key.as_bytes()).to_vec();
     Aes256Gcm::new_from_slice(&k).map_err(|e| anyhow!("{e}"))
 }
 
-pub async fn store(pool: &SqlitePool, channel_id: i64, token: &str) -> Result<()> {
-    let c = cipher()?;
+/// Encrypts `plain`; returns hex `(nonce, ciphertext)`.
+fn seal(plain: &str) -> Result<(String, String)> {
     let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
-    let ct = c
-        .encrypt(&nonce, token.as_bytes())
+    let ct = cipher()?
+        .encrypt(&nonce, plain.as_bytes())
         .map_err(|_| anyhow!("could not encrypt token"))?;
+    Ok((hex::encode(nonce), hex::encode(ct)))
+}
+
+fn open(nonce: &str, ct: &str) -> Result<String> {
+    let nonce = hex::decode(nonce)?;
+    let plain = cipher()?
+        .decrypt(Nonce::from_slice(&nonce), hex::decode(ct)?.as_slice())
+        .map_err(|_| anyhow!("stored token cannot be decrypted (BLUESTONE_SECRET_KEY changed?)"))?;
+    Ok(String::from_utf8(plain)?)
+}
+
+/// Stores a pasted key encrypted and returns the `secret:<id>` reference for `credential_env`.
+pub async fn store_secret(pool: &SqlitePool, plain: &str) -> Result<String> {
+    let (nonce, ct) = seal(plain)?;
+    let (id,): (i64,) =
+        sqlx::query_as("INSERT INTO secrets (nonce, ciphertext) VALUES (?, ?) RETURNING id")
+            .bind(nonce)
+            .bind(ct)
+            .fetch_one(pool)
+            .await?;
+    Ok(format!("{SECRET_PREFIX}{id}"))
+}
+
+/// Deletes pasted keys no channel or accounting connection points to any more.
+pub async fn prune_secrets(pool: &SqlitePool) -> Result<u64> {
+    Ok(sqlx::query(
+        "DELETE FROM secrets WHERE 'secret:' || id NOT IN (
+           SELECT credential_env FROM channels UNION SELECT credential_env FROM accounting_connections)",
+    )
+    .execute(pool)
+    .await?
+    .rows_affected())
+}
+
+async fn secret(pool: &SqlitePool, id: &str) -> Result<String> {
+    let (nonce, ct): (String, String) =
+        sqlx::query_as("SELECT nonce, ciphertext FROM secrets WHERE id = ?")
+            .bind(id.parse::<i64>().context("expected secret:<id>")?)
+            .fetch_optional(pool)
+            .await?
+            .context("stored key not found; paste it again in Settings → Integrations")?;
+    open(&nonce, &ct)
+}
+
+pub async fn store(pool: &SqlitePool, channel_id: i64, token: &str) -> Result<()> {
+    let (nonce, ct) = seal(token)?;
     let mut tx = pool.begin().await?;
     sqlx::query(
         "INSERT INTO channel_tokens (channel_id, nonce, ciphertext) VALUES (?, ?, ?)
@@ -46,8 +95,8 @@ pub async fn store(pool: &SqlitePool, channel_id: i64, token: &str) -> Result<()
            updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')",
     )
     .bind(channel_id)
-    .bind(hex::encode(nonce))
-    .bind(hex::encode(ct))
+    .bind(nonce)
+    .bind(ct)
     .execute(&mut *tx)
     .await?;
     sqlx::query("UPDATE channels SET credential_env = ?, last_sync_error = NULL WHERE id = ?")
@@ -66,11 +115,7 @@ async fn stored(pool: &SqlitePool, channel_id: i64) -> Result<String> {
             .fetch_optional(pool)
             .await?
             .context("channel is not connected yet; run its Connect flow")?;
-    let nonce = hex::decode(nonce)?;
-    let plain = cipher()?
-        .decrypt(Nonce::from_slice(&nonce), hex::decode(ct)?.as_slice())
-        .map_err(|_| anyhow!("stored token cannot be decrypted (BLUESTONE_SECRET_KEY changed?)"))?;
-    Ok(String::from_utf8(plain)?)
+    open(&nonce, &ct)
 }
 
 async fn nango(spec: &str) -> Result<String> {
@@ -113,13 +158,19 @@ pub async fn resolve(
     kind: &str,
     reference: &str,
 ) -> Result<String> {
-    let token = if reference == OAUTH {
-        stored(pool, channel_id).await?
+    if reference == OAUTH {
+        for_kind(kind, stored(pool, channel_id).await?)
+    } else if let Some(id) = reference.strip_prefix(SECRET_PREFIX) {
+        for_kind(kind, secret(pool, id).await?)
     } else if let Some(spec) = reference.strip_prefix("nango:") {
-        nango(spec).await?
+        for_kind(kind, nango(spec).await?)
     } else {
-        return env(reference.strip_prefix("env:").unwrap_or(reference));
-    };
+        env(reference.strip_prefix("env:").unwrap_or(reference))
+    }
+}
+
+/// Turns a user's token into what the connector expects (Faire also needs the app credentials).
+pub fn for_kind(kind: &str, token: String) -> Result<String> {
     if kind == "faire" {
         Ok(format!("{}:{token}", faire_app_credentials()?))
     } else {

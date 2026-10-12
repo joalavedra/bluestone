@@ -25,6 +25,7 @@ target/debug/mock_faire &                        # http://127.0.0.1:8789
 export FAIRE_DEV_CREDENTIAL="ZGV2OmRldg==:faire_dev_mock"
 
 # 3. Wire channels, tokens, sync
+# Or in the UI: Settings → Integrations (pasted keys need BLUESTONE_SECRET_KEY set).
 target/debug/bluestone channel add --brand "Northwind Coffee" --kind shopify --name shopify-dev \
   --base-url http://127.0.0.1:8788 --credential-env SHOPIFY_DEV_TOKEN
 target/debug/bluestone channel add --brand "Northwind Coffee" --kind prestashop --name presta-dev \

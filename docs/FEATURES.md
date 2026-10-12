@@ -61,6 +61,7 @@ Status: ✅ in v0 · 🟡 partial · 🔜 planned (see ROADMAP.md) · ✖ out of
 | Reorder list by supplier | ✔ | Grouped low/out items + suggested qty | ✅ (read-only) |
 | Activity log | – | Agent / human / system timeline | ✅ |
 | Channels & agent setup | onboarding call | Sync status + copy-paste MCP config | ✅ |
+| Settings → Integrations | onboarding call | Searchable connector catalog, per-connector setup form, test before save, keys stored encrypted (or env var / Nango) | ✅ |
 | In-app chat assistant | ✔ | ✖ — your own agent is the assistant | ✖ |
 
 ## Integrations

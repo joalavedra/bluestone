@@ -1,5 +1,5 @@
 import { Link, useRouterState } from "@tanstack/react-router"
-import { Activity, Boxes, ClipboardList, Inbox, LayoutDashboard, LogOut, Plug, ReceiptText, ShoppingCart } from "lucide-react"
+import { Activity, Boxes, ClipboardList, Inbox, LayoutDashboard, LogOut, Plug, ReceiptText, Settings, ShoppingCart } from "lucide-react"
 import { useEffect, useState } from "react"
 import type { ReactNode } from "react"
 import { Button } from "@/components/ui/button"
@@ -18,6 +18,7 @@ const nav = [
   { to: "/sales-orders", label: "Sales orders", icon: ReceiptText },
   { to: "/activity", label: "Activity", icon: Activity },
   { to: "/channels", label: "Channels", icon: Plug },
+  { to: "/settings", label: "Settings", icon: Settings },
 ] as const
 
 function Logo() {

@@ -6,6 +6,7 @@ pub mod connectors;
 pub mod credentials;
 pub mod db;
 pub mod forecast;
+pub mod integrations;
 pub mod ledger;
 pub mod mcp;
 pub mod purchasing;

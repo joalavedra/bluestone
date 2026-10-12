@@ -417,3 +417,59 @@ export const post = (path: string, body?: unknown) =>
 export const patch = (path: string, body: unknown) =>
   api(path, { method: "PATCH", body: JSON.stringify(body) })
 export const del = (path: string) => api(path, { method: "DELETE" })
+
+export interface IntegrationField {
+  key: string
+  label: string
+  kind: "text" | "url"
+  required: boolean
+  placeholder: string | null
+  default: string | null
+  help: string | null
+}
+
+export interface IntegrationConnector {
+  id: string
+  name: string
+  category: "sales_channel" | "accounting" | "email"
+  description: string
+  status: "available" | "coming_soon"
+  fields: Array<IntegrationField>
+  credential: {
+    label: string
+    help: string
+    oauth: boolean
+    reference_example: string
+  } | null
+}
+
+export interface IntegrationConnection {
+  connector: string
+  kind: "channel" | "accounting"
+  id: number
+  brand: string
+  label: string
+  fields: Record<string, string>
+  credential_source: "stored" | "env" | "nango" | "oauth"
+  last_synced_at: string | null
+  error: string | null
+}
+
+export interface IntegrationsOverview {
+  connectors: Array<IntegrationConnector>
+  connections: Array<IntegrationConnection>
+}
+
+export interface IntegrationInput {
+  connector: string
+  brand: string
+  fields: Record<string, string>
+  secret?: string
+  credential_ref?: string
+}
+
+export const useIntegrations = () =>
+  useQuery({
+    queryKey: ["integrations"],
+    queryFn: () => api<IntegrationsOverview>("/integrations"),
+  })

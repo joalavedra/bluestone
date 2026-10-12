@@ -239,6 +239,25 @@ async fn holded_documents(
     )
 }
 
+async fn qbo_company(
+    State(m): State<Shared>,
+    h: HeaderMap,
+    Path((realm, id)): Path<(String, String)>,
+) -> Reply {
+    if let Err(e) = qbo_auth(&m, &h) {
+        return e;
+    }
+    if realm != id {
+        return err(StatusCode::BAD_REQUEST, "company id mismatch");
+    }
+    (
+        StatusCode::OK,
+        Json(
+            json!({ "CompanyInfo": { "Id": realm, "CompanyName": format!("Mock Company {realm}") } }),
+        ),
+    )
+}
+
 async fn dump(State(m): State<Shared>) -> Json<Value> {
     let store = m.store.lock().unwrap();
     Json(json!({ "quickbooks": store.qbo, "holded": store.holded }))
@@ -255,6 +274,7 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .route("/v3/company/{realm}/query", get(qbo_query))
         .route("/v3/company/{realm}/{entity}", post(qbo_create))
+        .route("/v3/company/{realm}/companyinfo/{id}", get(qbo_company))
         .route(
             "/api/invoicing/v1/contacts",
             get(holded_contacts).post(holded_create_contact),
