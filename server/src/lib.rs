@@ -1,3 +1,5 @@
+pub mod accounting;
+pub mod accounting_sync;
 pub mod api;
 pub mod auth;
 pub mod connectors;

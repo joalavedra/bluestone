@@ -3,18 +3,34 @@ import { Check, PackageCheck, Send, X } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
 import { Empty, PageHeader } from "@/components/bits"
+import { BooksButton } from "@/components/books"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { post, useAction, usePurchaseOrders } from "@/lib/api"
 import type { PoStatus, PurchaseOrder } from "@/lib/api"
 import { ago, money, num } from "@/lib/format"
 import { cn } from "@/lib/utils"
 
-export const Route = createFileRoute("/purchase-orders")({ component: PurchaseOrdersPage })
+export const Route = createFileRoute("/purchase-orders")({
+  component: PurchaseOrdersPage,
+})
 
 const tone: Record<PoStatus, string> = {
   draft: "border-amber-200 bg-amber-50 text-amber-800",
@@ -75,7 +91,8 @@ function PoCard({ po }: { po: PurchaseOrder }) {
         onError: (e) => toast.error(e.message),
       }
     )
-  const receivable = po.status === "approved" || po.status === "sent" || po.status === "partial"
+  const receivable =
+    po.status === "approved" || po.status === "sent" || po.status === "partial"
   const entered = po.lines
     .filter((l) => Number(qty[l.id]) > 0)
     .map((l) => ({ item: String(l.item_id), quantity: Number(qty[l.id]) }))
@@ -85,26 +102,48 @@ function PoCard({ po }: { po: PurchaseOrder }) {
         <div>
           <CardTitle className="flex items-center gap-2">
             PO #{po.id} · {po.supplier ?? "No supplier"}
-            <Badge variant="outline" className={cn("capitalize", tone[po.status])}>
+            <Badge
+              variant="outline"
+              className={cn("capitalize", tone[po.status])}
+            >
               {po.status}
             </Badge>
           </CardTitle>
           <CardDescription>
             {po.brand}
-            {po.warehouse ? ` → ${po.warehouse}` : ""} · {num(po.received_units)}/{num(po.units)} received ·{" "}
-            {money(po.total_cost)} · drafted by {po.created_by} {ago(po.created_at)}
+            {po.warehouse ? ` → ${po.warehouse}` : ""} ·{" "}
+            {num(po.received_units)}/{num(po.units)} received ·{" "}
+            {money(po.total_cost)} · drafted by {po.created_by}{" "}
+            {ago(po.created_at)}
             {po.approved_by ? ` · approved by ${po.approved_by}` : ""}
             {po.note ? ` · ${po.note}` : ""}
           </CardDescription>
         </div>
         <div className="flex flex-wrap justify-end gap-2">
+          <BooksButton
+            brand={po.brand}
+            source="purchase_order"
+            id={po.id}
+            ready={["approved", "sent", "partial", "received"].includes(
+              po.status
+            )}
+          />
           {po.status === "draft" && (
-            <Button size="sm" disabled={act.isPending} onClick={() => run("approve", `PO #${po.id} approved`)}>
+            <Button
+              size="sm"
+              disabled={act.isPending}
+              onClick={() => run("approve", `PO #${po.id} approved`)}
+            >
               <Check className="size-4" /> Approve
             </Button>
           )}
           {po.status === "approved" && (
-            <Button size="sm" variant="outline" disabled={act.isPending} onClick={() => run("send", `PO #${po.id} marked sent`)}>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={act.isPending}
+              onClick={() => run("send", `PO #${po.id} marked sent`)}
+            >
               <Send className="size-4" /> Mark sent
             </Button>
           )}
@@ -115,12 +154,15 @@ function PoCard({ po }: { po: PurchaseOrder }) {
               onClick={() =>
                 run(
                   "receive",
-                  entered.length ? "Received entered quantities" : `PO #${po.id} received in full`,
+                  entered.length
+                    ? "Received entered quantities"
+                    : `PO #${po.id} received in full`,
                   entered.length ? { lines: entered } : undefined
                 )
               }
             >
-              <PackageCheck className="size-4" /> {entered.length ? "Receive entered" : "Receive all"}
+              <PackageCheck className="size-4" />{" "}
+              {entered.length ? "Receive entered" : "Receive all"}
             </Button>
           )}
           {(po.status === "draft" || receivable) && (
@@ -128,9 +170,15 @@ function PoCard({ po }: { po: PurchaseOrder }) {
               size="sm"
               variant="ghost"
               disabled={act.isPending}
-              onClick={() => run("cancel", `PO #${po.id} ${po.status === "partial" ? "closed" : "cancelled"}`)}
+              onClick={() =>
+                run(
+                  "cancel",
+                  `PO #${po.id} ${po.status === "partial" ? "closed" : "cancelled"}`
+                )
+              }
             >
-              <X className="size-4" /> {po.status === "partial" ? "Close short" : "Cancel"}
+              <X className="size-4" />{" "}
+              {po.status === "partial" ? "Close short" : "Cancel"}
             </Button>
           )}
         </div>
@@ -144,7 +192,9 @@ function PoCard({ po }: { po: PurchaseOrder }) {
               <TableHead className="text-right">Received</TableHead>
               <TableHead className="text-right">Unit cost</TableHead>
               <TableHead className="text-right">Line total</TableHead>
-              {receivable && <TableHead className="w-32 text-right">Receive now</TableHead>}
+              {receivable && (
+                <TableHead className="w-32 text-right">Receive now</TableHead>
+              )}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -153,18 +203,33 @@ function PoCard({ po }: { po: PurchaseOrder }) {
               return (
                 <TableRow key={l.id}>
                   <TableCell>
-                    <Link to="/items/$itemId" params={{ itemId: String(l.item_id) }} className="font-medium hover:underline">
+                    <Link
+                      to="/items/$itemId"
+                      params={{ itemId: String(l.item_id) }}
+                      className="font-medium hover:underline"
+                    >
                       {l.name}
                     </Link>
-                    <div className="text-muted-foreground text-xs">{l.sku}</div>
+                    <div className="text-xs text-muted-foreground">{l.sku}</div>
                   </TableCell>
-                  <TableCell className="text-right tabular-nums">{num(l.quantity)}</TableCell>
-                  <TableCell className={cn("text-right tabular-nums", outstanding === 0 && "text-emerald-700")}>
+                  <TableCell className="text-right tabular-nums">
+                    {num(l.quantity)}
+                  </TableCell>
+                  <TableCell
+                    className={cn(
+                      "text-right tabular-nums",
+                      outstanding === 0 && "text-emerald-700"
+                    )}
+                  >
                     {num(l.received)}
                   </TableCell>
-                  <TableCell className="text-right tabular-nums">{l.unit_cost === null ? "—" : money(l.unit_cost)}</TableCell>
                   <TableCell className="text-right tabular-nums">
-                    {l.unit_cost === null ? "—" : money(l.unit_cost * l.quantity)}
+                    {l.unit_cost === null ? "—" : money(l.unit_cost)}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {l.unit_cost === null
+                      ? "—"
+                      : money(l.unit_cost * l.quantity)}
                   </TableCell>
                   {receivable && (
                     <TableCell className="text-right">
@@ -175,7 +240,9 @@ function PoCard({ po }: { po: PurchaseOrder }) {
                           max={outstanding}
                           placeholder={String(outstanding)}
                           value={qty[l.id] ?? ""}
-                          onChange={(e) => setQty({ ...qty, [l.id]: e.target.value })}
+                          onChange={(e) =>
+                            setQty({ ...qty, [l.id]: e.target.value })
+                          }
                           className="ml-auto h-8 w-24 text-right"
                         />
                       )}

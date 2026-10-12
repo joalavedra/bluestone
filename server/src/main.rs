@@ -56,6 +56,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: ChannelCmd,
     },
+    /// Connect a brand to its accounting system (QuickBooks or Holded).
+    Accounting {
+        #[command(subcommand)]
+        cmd: AccountingCmd,
+    },
     /// Pull products, stock and orders from every channel (or one).
     Sync {
         #[arg(long)]
@@ -76,6 +81,33 @@ enum TokenCmd {
         scopes: String,
     },
     List,
+}
+
+#[derive(Subcommand)]
+enum AccountingCmd {
+    /// Set (or replace) the brand's accounting system.
+    Set {
+        #[arg(long)]
+        brand: String,
+        /// quickbooks or holded
+        #[arg(long)]
+        kind: String,
+        /// Defaults to the production API of `kind`.
+        #[arg(long)]
+        base_url: Option<String>,
+        /// QuickBooks company id.
+        #[arg(long)]
+        realm: Option<String>,
+        /// Env var (or `nango:<integration>/<connection>`) holding the OAuth token / API key.
+        #[arg(long)]
+        credential_env: String,
+        /// QuickBooks income account id for items Bluestone creates.
+        #[arg(long)]
+        income_account: Option<String>,
+        /// QuickBooks expense account id for items Bluestone creates.
+        #[arg(long)]
+        expense_account: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -186,6 +218,34 @@ async fn main() -> Result<()> {
                     c.last_synced_at.unwrap_or_else(|| "never".into())
                 );
             }
+        }
+        Cmd::Accounting {
+            cmd:
+                AccountingCmd::Set {
+                    brand,
+                    kind,
+                    base_url,
+                    realm,
+                    credential_env,
+                    income_account,
+                    expense_account,
+                },
+        } => {
+            let id = svc
+                .set_accounting(
+                    &Principal::system(),
+                    &bluestone::accounting_sync::NewAccountingConnection {
+                        brand,
+                        kind,
+                        base_url,
+                        realm,
+                        credential_env,
+                        income_account,
+                        expense_account,
+                    },
+                )
+                .await?;
+            println!("accounting connection {id}");
         }
         Cmd::Sync { channel } => {
             let who = Principal::system();
