@@ -162,6 +162,8 @@ pub async fn faire_authorize_url(pool: &SqlitePool, channel_id: i64) -> Result<S
 /// Redeems the authorization code. The state must be < 15 minutes old; it is consumed only once
 /// the exchange succeeds, so a transient Faire error can be retried.
 pub async fn faire_callback(pool: &SqlitePool, state: &str, code: &str) -> Result<i64> {
+    // Fail on config before redeeming the single-use code, so storing the token cannot fail after it.
+    cipher()?;
     let (channel_id,): (i64,) = sqlx::query_as(
         "SELECT channel_id FROM oauth_states WHERE state = ? AND created_at >= strftime('%Y-%m-%dT%H:%M:%SZ','now','-15 minutes')",
     )
