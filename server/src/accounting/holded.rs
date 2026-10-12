@@ -65,6 +65,20 @@ impl Holded {
 
 #[async_trait]
 impl Books for Holded {
+    async fn check(&self) -> Result<String> {
+        let contacts: Vec<Value> = self
+            .http
+            .get(format!("{}/contacts", self.base))
+            .header("key", &self.key)
+            .send()
+            .await?
+            .error_for_status()
+            .context("Holded key check failed")?
+            .json()
+            .await?;
+        Ok(format!("API key works · {} contacts", contacts.len()))
+    }
+
     async fn contact(&self, party: Party, name: &str, email: Option<&str>) -> Result<String> {
         let contacts: Vec<Value> = self
             .http

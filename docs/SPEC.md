@@ -94,7 +94,7 @@ Items are addressed by id or SKU (+ `brand` when a SKU exists in several brands)
 
 ## REST API (for the UI)
 
-All under `/api`, bearer auth. `GET /me`, `GET /overview`, `GET /brands`, `POST /brands/:id/stock-mode` (`mirror`/`master`, human only), `GET /warehouses?brand`, `GET /items/:id/ledger`, `GET /items?query&brand&tag&supplier&status`, `GET /items/:id`, `PATCH /items/:id`, `POST /items/:id/tags`, `DELETE /items/:id/tags/:tag`, `POST /items/:id/notes`, `POST /items/supplier`, `GET /tags`, `GET /suppliers`, `GET /sales?days&brand`, `GET /proposals?status`, `POST /proposals` (`kind` + fields), `POST /proposals/:id/approve`, `POST /proposals/:id/reject`, `GET /activity?actor_kind`, `GET|POST /channels`, `POST /channels/:id/sync`, `POST /sync`.
+All under `/api`, bearer auth. `GET /me`, `GET /overview`, `GET /brands`, `POST /brands/:id/stock-mode` (`mirror`/`master`, human only), `GET /warehouses?brand`, `GET /items/:id/ledger`, `GET /items?query&brand&tag&supplier&status`, `GET /items/:id`, `PATCH /items/:id`, `POST /items/:id/tags`, `DELETE /items/:id/tags/:tag`, `POST /items/:id/notes`, `POST /items/supplier`, `GET /tags`, `GET /suppliers`, `GET /sales?days&brand`, `GET /proposals?status`, `POST /proposals` (`kind` + fields), `POST /proposals/:id/approve`, `POST /proposals/:id/reject`, `GET /activity?actor_kind`, `GET|POST /channels`, `POST /channels/:id/sync`, `POST /sync`, `GET|POST /integrations`, `POST /integrations/test`, `POST /integrations/request`.
 
 ## Connectors
 
@@ -149,8 +149,20 @@ For wholesale and off-platform orders (email, phone, a photo of an order sheet).
 | `NAME` / `env:NAME` | environment variable (default; nothing stored) |
 | `nango:<integration>/<connection>` | self-hosted Nango (`NANGO_HOST`, `NANGO_SECRET_KEY`) via `GET /connections/{id}`; Nango owns the OAuth app and refresh (QuickBooks, Holded, Shopify, Gmail, …) |
 | `oauth` | token from Bluestone's own connect flow, AES-256-GCM encrypted in `channel_tokens` with `BLUESTONE_SECRET_KEY` |
+| `secret:<id>` | key pasted in Settings → Integrations, AES-256-GCM encrypted in `secrets` with `BLUESTONE_SECRET_KEY` |
 
 Faire (not supported by Nango) uses the built-in flow: `POST /api/channels/{id}/connect` (human admin) returns Faire's consent URL with a single-use `state`. Faire then redirects to the public `GET /oauth/faire/callback`, which redeems the code, stores the token and redirects to `BLUESTONE_UI_URL/channels`. Env: `FAIRE_APP_ID`, `FAIRE_APP_SECRET`, `BLUESTONE_PUBLIC_URL` (callback base). For Faire, the resolved secret is prefixed with base64(`FAIRE_APP_ID:FAIRE_APP_SECRET`).
+
+### Settings → Integrations
+
+`server/src/integrations.rs` holds the connector catalog: each connector declares its category, status (`available` / `coming_soon`), form fields (label, required, default, help) and credential (label, help, whether a provider login can replace it). The UI builds each setup form from that, so a new connector gets a setup screen by adding a catalog entry.
+
+- `GET /integrations` (read scope): catalog plus current connections (channels and active accounting connections) with non-secret fields and `credential_source` (`stored`, `env`, `nango`, `oauth`); keys are never returned.
+- `POST /integrations/test` (human admin): resolves the credential and makes one read-only call (channels: fetch the catalog and report listings/locations; accounting: `Books::check`, e.g. QuickBooks `companyinfo`), with a 30 s limit. Nothing is saved.
+- `POST /integrations` (human admin): `secret` (pasted, stored encrypted as `secret:<id>`) or `credential_ref` (env var or `nango:…`); with neither, the existing connection keeps its credential, and Faire falls back to its OAuth connect (`needs_oauth`). Saves through `add_channel` / `set_accounting`, then deletes pasted keys nothing references any more.
+- `POST /integrations/request`: logs `integration_request` for a coming-soon connector.
+
+Agents can read the list but can't test or save. Store/API addresses are not allowlisted yet (deferred to hosted multi-brand deployments).
 
 ## Accounting
 

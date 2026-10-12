@@ -19,6 +19,7 @@ Exit criteria: from Claude Code, "what's running low at Northwind?" → tag + pr
 
 Why next: real data surfaces matching/velocity issues early; policy rules cut approval fatigue, which is what makes an agent actually save time.
 
+- ✅ Settings → Integrations: self-serve connector setup with test before save.
 - Real Shopify dev store / custom app; first real PrestaShop shop (read-only key first).
 - Webhooks for orders and inventory → near real-time.
 - Policy rules (Valet-style): auto-apply under limits, per-agent budgets, quiet hours.

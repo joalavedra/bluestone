@@ -90,6 +90,9 @@ pub fn router(svc: AppState) -> Router {
         .route("/purchase-orders/{id}/export", post(export_po))
         .route("/accounting", get(accounting).post(set_accounting))
         .route("/activity", get(activity))
+        .route("/integrations", get(integrations).post(save_integration))
+        .route("/integrations/test", post(test_integration))
+        .route("/integrations/request", post(request_integration))
         .route("/channels", get(channels).post(add_channel))
         .route("/channels/{id}/sync", post(sync_channel))
         .route("/channels/{id}/connect", post(connect_channel))
@@ -677,4 +680,41 @@ async fn export_so(
     Path(id): Path<i64>,
 ) -> R<crate::accounting_sync::AccountingDocument> {
     Ok(Json(s.export_so(&p, id).await?))
+}
+
+async fn integrations(
+    State(s): State<AppState>,
+    Extension(p): Extension<Principal>,
+) -> R<crate::integrations::IntegrationsOverview> {
+    Ok(Json(s.integrations(&p).await?))
+}
+
+async fn test_integration(
+    State(s): State<AppState>,
+    Extension(p): Extension<Principal>,
+    Json(i): Json<crate::integrations::IntegrationInput>,
+) -> R<crate::integrations::TestResult> {
+    Ok(Json(s.test_integration(&p, &i).await?))
+}
+
+async fn save_integration(
+    State(s): State<AppState>,
+    Extension(p): Extension<Principal>,
+    Json(i): Json<crate::integrations::IntegrationInput>,
+) -> R<crate::integrations::Saved> {
+    Ok(Json(s.save_integration(&p, &i).await?))
+}
+
+#[derive(Deserialize)]
+struct IntegrationRequest {
+    connector: String,
+}
+
+async fn request_integration(
+    State(s): State<AppState>,
+    Extension(p): Extension<Principal>,
+    Json(r): Json<IntegrationRequest>,
+) -> R<Value> {
+    s.request_integration(&p, &r.connector).await?;
+    Ok(Json(json!({ "ok": true })))
 }

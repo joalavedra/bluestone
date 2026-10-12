@@ -56,6 +56,8 @@ pub trait Books: Send + Sync {
     /// Finds a bill/invoice already created for this document number and contact, so a retry after
     /// a lost response doesn't create it twice.
     async fn find_document(&self, party: Party, doc: &Doc) -> Result<Option<String>>;
+    /// Read-only call proving the credentials work; returns a short description (e.g. company name).
+    async fn check(&self) -> Result<String>;
 }
 
 pub struct Config {

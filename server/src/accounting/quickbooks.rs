@@ -10,6 +10,7 @@ const MINOR_VERSION: &str = "75";
 pub struct QuickBooks {
     http: reqwest::Client,
     base: String,
+    realm: String,
     token: String,
     income_account: String,
     expense_account: String,
@@ -23,6 +24,7 @@ impl QuickBooks {
         Ok(Self {
             http: super::http()?,
             base: format!("{}/v3/company/{realm}", c.base_url.trim_end_matches('/')),
+            realm,
             token: c.credential,
             income_account: c
                 .income_account
@@ -112,6 +114,25 @@ fn lines(doc: &Doc, detail: &str) -> Vec<Value> {
 
 #[async_trait]
 impl Books for QuickBooks {
+    async fn check(&self) -> Result<String> {
+        let v: Value = self
+            .http
+            .get(format!("{}/companyinfo/{}", self.base, self.realm))
+            .query(&[("minorversion", MINOR_VERSION)])
+            .bearer_auth(&self.token)
+            .header("Accept", "application/json")
+            .send()
+            .await?
+            .error_for_status()
+            .context("QuickBooks company lookup failed")?
+            .json()
+            .await?;
+        let name = v["CompanyInfo"]["CompanyName"]
+            .as_str()
+            .unwrap_or("company");
+        Ok(format!("connected to {name}"))
+    }
+
     async fn contact(&self, party: Party, name: &str, email: Option<&str>) -> Result<String> {
         let entity = match party {
             Party::Supplier => "Vendor",

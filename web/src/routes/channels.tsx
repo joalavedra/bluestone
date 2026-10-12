@@ -185,7 +185,9 @@ function ChannelsPage() {
                         >
                           Sync now
                         </Button>
-                        {c.kind === "faire" && <FaireConnect channelId={c.id} />}
+                        {c.kind === "faire" && (
+                          <FaireConnect channelId={c.id} />
+                        )}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -197,7 +199,8 @@ function ChannelsPage() {
         ))}
         {!data.length && (
           <Empty>
-            No channels yet. Add one with <code>bluestone channel add</code>.
+            No channels yet. Connect one in Settings → Integrations, or with{" "}
+            <code>bluestone channel add</code>.
           </Empty>
         )}
         <Card className="shadow-none">
