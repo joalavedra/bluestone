@@ -250,7 +250,8 @@ export const useWarehouses = () =>
     queryKey: ["warehouses"],
     queryFn: () => api<Array<Warehouse>>("/warehouses"),
   })
-export type PoStatus = "draft" | "approved" | "sent" | "partial" | "received" | "cancelled"
+export type PoStatus =
+  "draft" | "approved" | "sent" | "partial" | "received" | "cancelled"
 export interface PoLine {
   id: number
   item_id: number
@@ -280,9 +281,11 @@ export interface PurchaseOrder {
 export const usePurchaseOrders = (status = "open") =>
   useQuery({
     queryKey: ["purchase-orders", status],
-    queryFn: () => api<Array<PurchaseOrder>>(`/purchase-orders${qs({ status })}`),
+    queryFn: () =>
+      api<Array<PurchaseOrder>>(`/purchase-orders${qs({ status })}`),
   })
-export type SoStatus = "proposed" | "confirmed" | "fulfilled" | "rejected" | "cancelled"
+export type SoStatus =
+  "proposed" | "confirmed" | "fulfilled" | "rejected" | "cancelled"
 export interface SoLine {
   id: number
   item_id: number
@@ -370,6 +373,37 @@ export const useActivity = (actorKind: string) =>
   })
 
 /** Mutation that refreshes every query on success — the dataset is small and views overlap heavily. */
+export interface AccountingDocument {
+  id: number
+  connection_id: number
+  brand: string
+  system: string
+  source: "purchase_order" | "sales_order"
+  source_id: number
+  status: "pending" | "exported" | "failed"
+  external_id: string | null
+  error: string | null
+  created_by: string | null
+  updated_at: string
+}
+
+export interface AccountingOverview {
+  connections: Array<{
+    id: number
+    brand: string
+    kind: string
+    base_url: string
+    realm: string | null
+  }>
+  documents: Array<AccountingDocument>
+}
+
+export const useAccounting = () =>
+  useQuery({
+    queryKey: ["accounting"],
+    queryFn: () => api<AccountingOverview>("/accounting"),
+  })
+
 export function useAction<TVars>(fn: (v: TVars) => Promise<unknown>) {
   const qc = useQueryClient()
   return useMutation({

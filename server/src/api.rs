@@ -85,7 +85,10 @@ pub fn router(svc: AppState) -> Router {
         .route("/purchase-orders/{id}/receive", post(receive_po))
         .route("/sales-orders", get(sales_orders).post(propose_so))
         .route("/sales-orders/{id}", get(sales_order))
+        .route("/sales-orders/{id}/export", post(export_so))
         .route("/sales-orders/{id}/{action}", post(so_action))
+        .route("/purchase-orders/{id}/export", post(export_po))
+        .route("/accounting", get(accounting).post(set_accounting))
         .route("/activity", get(activity))
         .route("/channels", get(channels).post(add_channel))
         .route("/channels/{id}/sync", post(sync_channel))
@@ -643,4 +646,35 @@ async fn connect_channel(
             "only Faire channels use Bluestone's own OAuth flow; use an env var or nango:<integration>/<connection>".into(),
         )),
     }
+}
+
+async fn accounting(
+    State(s): State<AppState>,
+    Extension(p): Extension<Principal>,
+) -> R<crate::accounting_sync::AccountingOverview> {
+    Ok(Json(s.accounting(&p).await?))
+}
+
+async fn set_accounting(
+    State(s): State<AppState>,
+    Extension(p): Extension<Principal>,
+    Json(c): Json<crate::accounting_sync::NewAccountingConnection>,
+) -> R<Value> {
+    Ok(Json(json!({ "id": s.set_accounting(&p, &c).await? })))
+}
+
+async fn export_po(
+    State(s): State<AppState>,
+    Extension(p): Extension<Principal>,
+    Path(id): Path<i64>,
+) -> R<crate::accounting_sync::AccountingDocument> {
+    Ok(Json(s.export_po(&p, id).await?))
+}
+
+async fn export_so(
+    State(s): State<AppState>,
+    Extension(p): Extension<Principal>,
+    Path(id): Path<i64>,
+) -> R<crate::accounting_sync::AccountingDocument> {
+    Ok(Json(s.export_so(&p, id).await?))
 }

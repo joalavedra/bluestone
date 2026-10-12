@@ -151,3 +151,15 @@ For wholesale and off-platform orders (email, phone, a photo of an order sheet).
 | `oauth` | token from Bluestone's own connect flow, AES-256-GCM encrypted in `channel_tokens` with `BLUESTONE_SECRET_KEY` |
 
 Faire (not supported by Nango) uses the built-in flow: `POST /api/channels/{id}/connect` (human admin) returns Faire's consent URL with a single-use `state`. Faire then redirects to the public `GET /oauth/faire/callback`, which redeems the code, stores the token and redirects to `BLUESTONE_UI_URL/channels`. Env: `FAIRE_APP_ID`, `FAIRE_APP_SECRET`, `BLUESTONE_PUBLIC_URL` (callback base). For Faire, the resolved secret is prefixed with base64(`FAIRE_APP_ID:FAIRE_APP_SECRET`).
+
+## Accounting
+
+One accounting system per brand, behind the `accounting::Books` trait. QuickBooks Online (v3) and Holded (invoicing v1) implement it; adding another system means implementing four methods: `contact`, `item`, `create_bill`, `create_invoice`.
+
+- **What is pushed:** an approved PO (`approved`/`sent`/`partial`/`received`) becomes a supplier bill for the ordered quantities at unit cost. A `confirmed`/`fulfilled` sales order becomes a customer invoice, with the customer reference in the note. Documents are numbered `PO-<id>` / `SO-<id>`.
+- **Who:** human/system tokens with `approve` scope only. Agents can read `GET /api/accounting`, but never write to the books.
+- **Idempotent:** `accounting_documents` keeps one row per (connection, order). Exporting again returns the existing bill or invoice. A failed export records its error and can be retried. Contacts and items found or created remotely are cached in `accounting_links`.
+- **Connect:** `bluestone accounting set --brand … --kind quickbooks|holded --credential-env …`, or `POST /api/accounting`. Credentials use the same references as channels (env var or `nango:<integration>/<connection>`). QuickBooks also needs `--realm` (company id) and `--income-account`/`--expense-account` for the items Bluestone creates. Setting a new system for a brand keeps the old connection's history.
+- **API:** `POST /api/purchase-orders/{id}/export`, `POST /api/sales-orders/{id}/export`.
+- **Dev:** `server/target/debug/mock_accounting` mocks both APIs (`GET /_dump` shows what was created); `dev/smoke-accounting.sh` covers both systems.
+- **Not yet:** taxes (Holded applies its defaults; QuickBooks lines are sent without tax codes), payments, pulling costs back, posting stock value/COGS journals.

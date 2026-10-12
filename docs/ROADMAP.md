@@ -41,11 +41,12 @@ Why: brands selling on both platforms double-count or oversell; one master quant
 
 - ✅ Faire (wholesale).
 - Amazon, TikTok Shop, WooCommerce.
-- Cost import from QuickBooks / Holded; margin and stock value at cost.
+- ✅ Accounting sync (QuickBooks + Holded): PO → bill, SO → invoice.
+- Cost import from the books; margin, stock value and COGS journals.
 - Multi-user orgs, SSO, hosted offering.
 
 ## Non-goals (for now)
 
-- Accounting, invoicing, full ERP.
+- Full ERP (general ledger, payroll); Bluestone only pushes documents to the books.
 - Built-in chat assistant — the user's own agent is the assistant.
 - Warehouse picking / WMS.

@@ -23,6 +23,7 @@ jobs:
       - run: cargo test
       - run: sudo apt-get install -y jq && ../dev/smoke.sh
       - run: ../dev/smoke-faire.sh
+      - run: ../dev/smoke-accounting.sh
 
   web:
     runs-on: ubuntu-latest
