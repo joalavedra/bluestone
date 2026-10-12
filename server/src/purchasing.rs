@@ -381,6 +381,7 @@ impl Service {
     pub async fn cancel_po(&self, who: &Principal, id: i64) -> SResult<PurchaseOrder> {
         who.require(Scope::Approve)?;
         human(who, "cancel purchase orders")?;
+        self.ensure_not_booked("purchase_order", id).await?;
         self.transition(
             who,
             id,

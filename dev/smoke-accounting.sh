@@ -34,6 +34,8 @@ BILL=$(curl "${H[@]}" -X POST "$API/purchase-orders/$PO/export" | jq -r .externa
 test "$(curl "${H[@]}" -X POST "$API/purchase-orders/$PO/export" | jq -r .external_id)" = "$BILL"
 books '.quickbooks | {vendors: [.Vendor[].DisplayName], items: [.Item[].Sku], bills: [.Bill[] | {DocNumber, TotalAmt}]}'
 test "$(books '.quickbooks.Bill | length')" = 1 && test "$(books '.quickbooks.Bill[0].TotalAmt')" = 98.4
+echo "cancel billed PO: HTTP $(code "$HUMAN" "purchase-orders/$PO/cancel")"; test "$(code "$HUMAN" "purchase-orders/$PO/cancel")" = 409
+jq -r .error "$WORK/body"
 
 echo "--- SO → QuickBooks invoice"
 SO=$(curl "${H[@]}" -X POST $API/sales-orders -d '{"brand":"Northwind Coffee","customer":"Cafe Roma","customer_email":"orders@caferoma.test","external_ref":"PO-7781","lines":[{"item":"NW-ESP-250","quantity":10,"unit_price":5.5}]}' | jq .id)
@@ -56,6 +58,7 @@ echo "agent sees: $AGENT_ERR"; test "$AGENT_ERR" = "export failed (details visib
 curl "${H[@]}" -X POST $API/accounting -d '{"brand":"Northwind Coffee","kind":"quickbooks","realm":"9130","income_account":"79","expense_account":"80","base_url":"http://127.0.0.1:18890","credential_env":"QBO_DEV_TOKEN"}' >/dev/null
 curl "${H[@]}" -X POST "$API/sales-orders/$SO2/export" | jq -c '{status, external_id}'
 test "$(books '.quickbooks.Invoice | length')" = 2
+test "$(code "$HUMAN" "sales-orders/$SO2/cancel")" = 409
 
 echo "--- a new connection to the same books adopts the existing bill instead of creating another"
 curl "${H[@]}" -X POST $API/accounting -d '{"brand":"Northwind Coffee","kind":"quickbooks","realm":"9130","income_account":"79","expense_account":"80","base_url":"http://localhost:18890","credential_env":"QBO_DEV_TOKEN"}' >/dev/null

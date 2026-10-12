@@ -95,3 +95,11 @@ pub fn http() -> Result<reqwest::Client> {
         .timeout(std::time::Duration::from_secs(30))
         .build()?)
 }
+
+pub fn label(kind: &str) -> &str {
+    match kind {
+        "quickbooks" => "QuickBooks",
+        "holded" => "Holded",
+        k => k,
+    }
+}

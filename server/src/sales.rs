@@ -409,6 +409,7 @@ impl Service {
     pub async fn cancel_so(&self, who: &Principal, id: i64) -> SResult<SalesOrder> {
         who.require(Scope::Approve)?;
         human(who, "cancel sales orders")?;
+        self.ensure_not_booked("sales_order", id).await?;
         let row = self
             .so_transition(who, id, "confirmed", "cancelled", "cancelled")
             .await?;

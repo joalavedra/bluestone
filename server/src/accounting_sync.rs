@@ -389,6 +389,36 @@ impl Service {
         }
     }
 
+    /// Refuses to cancel an order whose bill/invoice is in (or being sent to) the books.
+    pub(crate) async fn ensure_not_booked(&self, source: &str, id: i64) -> SResult<()> {
+        let booked: Option<(String, String, Option<String>)> = sqlx::query_as(
+            "SELECT c.kind, d.status, d.external_id FROM accounting_documents d
+             JOIN accounting_connections c ON c.id = d.connection_id
+             WHERE d.source = ? AND d.source_id = ? AND d.status IN ('exported', 'pending') LIMIT 1",
+        )
+        .bind(source)
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+        let Some((kind, status, external_id)) = booked else {
+            return Ok(());
+        };
+        let (label, what) = if source == "purchase_order" {
+            ("PO", "bill")
+        } else {
+            ("SO", "invoice")
+        };
+        let system = accounting::label(&kind);
+        Err(ServiceError::Conflict(if status == "pending" {
+            format!("{label} #{id} is being exported to {system}; try again once it finishes")
+        } else {
+            format!(
+                "{label} #{id} is booked in {system} as {what} {}; void it in {system} first",
+                external_id.unwrap_or_default()
+            )
+        }))
+    }
+
     async fn document(&self, conn: i64, source: &str, id: i64) -> SResult<AccountingDocument> {
         Ok(sqlx::query_as(&format!(
             "{DOC_SELECT} WHERE d.connection_id = ? AND d.source = ? AND d.source_id = ?"
