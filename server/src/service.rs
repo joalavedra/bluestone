@@ -522,7 +522,8 @@ pub struct NewChannel {
     pub name: String,
     /// Shopify: https://<shop>.myshopify.com. PrestaShop: shop root URL.
     pub base_url: String,
-    /// Name of the env var holding the access token / WebService key.
+    /// Where the secret comes from: an env var name (or `env:NAME`), `nango:<integration>/<connection>`,
+    /// or `oauth` once a Faire channel is connected through Bluestone.
     pub credential_env: String,
 }
 
@@ -1545,6 +1546,7 @@ impl Service {
         let listing_id = p.listing_id.context("proposal has no listing")?;
         #[derive(FromRow)]
         struct Row {
+            channel_id: i64,
             kind: String,
             base_url: String,
             credential_env: String,
@@ -1553,14 +1555,15 @@ impl Service {
             inventory_ref: Option<String>,
         }
         let r: Row = sqlx::query_as(
-            "SELECT c.kind, c.base_url, c.credential_env, l.external_product_id, l.external_variant_id, l.inventory_ref
+            "SELECT c.id AS channel_id, c.kind, c.base_url, c.credential_env, l.external_product_id, l.external_variant_id, l.inventory_ref
              FROM listings l JOIN channels c ON c.id = l.channel_id WHERE l.id = ?",
         )
         .bind(listing_id)
         .fetch_one(&self.pool)
         .await?;
-        let credential = std::env::var(&r.credential_env)
-            .map_err(|_| anyhow::anyhow!("env var {} is not set", r.credential_env))?;
+        let credential =
+            crate::credentials::resolve(&self.pool, r.channel_id, &r.kind, &r.credential_env)
+                .await?;
         let conn = connectors::build(&r.kind, &r.base_url, credential)?;
         let target = ListingRef {
             external_product_id: r.external_product_id,
@@ -1755,8 +1758,8 @@ impl Service {
             .fetch_optional(&self.pool)
             .await?
             .ok_or_else(|| anyhow::anyhow!("channel {channel_id} not found"))?;
-        let credential = std::env::var(&cred_env)
-            .map_err(|_| anyhow::anyhow!("env var {cred_env} is not set"))?;
+        let credential =
+            crate::credentials::resolve(&self.pool, channel_id, &kind, &cred_env).await?;
         let conn = connectors::build(&kind, &base_url, credential)?;
         let catalog = conn.fetch_catalog().await?;
         let orders = conn.fetch_orders(&days_ago(90)).await?;

@@ -556,14 +556,22 @@ impl Service {
                 )
                 .await?;
             }
-            let conn = conns.entry(row.channel_id).or_insert_with(|| {
-                std::env::var(&row.credential_env)
-                    .map_err(|_| format!("env var {} is not set", row.credential_env))
-                    .and_then(|cred| {
-                        connectors::build(&row.kind, &row.base_url, cred)
-                            .map_err(|e| format!("{e:#}"))
-                    })
-            });
+            if let std::collections::hash_map::Entry::Vacant(slot) = conns.entry(row.channel_id) {
+                let built = match crate::credentials::resolve(
+                    &self.pool,
+                    row.channel_id,
+                    &row.kind,
+                    &row.credential_env,
+                )
+                .await
+                {
+                    Ok(cred) => connectors::build(&row.kind, &row.base_url, cred)
+                        .map_err(|e| format!("{e:#}")),
+                    Err(e) => Err(format!("{e:#}")),
+                };
+                slot.insert(built);
+            }
+            let conn = &conns[&row.channel_id];
             let target_ref = ListingRef {
                 external_product_id: row.external_product_id.clone(),
                 external_variant_id: row.external_variant_id.clone(),

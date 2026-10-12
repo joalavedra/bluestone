@@ -139,3 +139,15 @@ For wholesale and off-platform orders (email, phone, a photo of an order sheet).
 - **Fulfil:** master brands get a `sale` ledger entry per line (`ref_type = sales_order`) in the same transaction as the status change. Mirror brands only record the status.
 - Each line reports `available` (excluding the order itself), and open orders carry `warnings` for shortfalls.
 - MCP: `propose_sales_order`, `list_sales_orders`, `get_sales_order`.
+
+## Credentials
+
+`channels.credential_env` is a reference, resolved by `server/src/credentials.rs` each time a connector is built:
+
+| Reference | Source |
+|---|---|
+| `NAME` / `env:NAME` | environment variable (default; nothing stored) |
+| `nango:<integration>/<connection>` | self-hosted Nango (`NANGO_HOST`, `NANGO_SECRET_KEY`) via `GET /connections/{id}`; Nango owns the OAuth app and refresh (QuickBooks, Holded, Shopify, Gmail, …) |
+| `oauth` | token from Bluestone's own connect flow, AES-256-GCM encrypted in `channel_tokens` with `BLUESTONE_SECRET_KEY` |
+
+Faire (not supported by Nango) uses the built-in flow: `POST /api/channels/{id}/connect` (human admin) returns Faire's consent URL with a single-use `state`. Faire then redirects to the public `GET /oauth/faire/callback`, which redeems the code, stores the token and redirects to `BLUESTONE_UI_URL/channels`. Env: `FAIRE_APP_ID`, `FAIRE_APP_SECRET`, `BLUESTONE_PUBLIC_URL` (callback base). For Faire, the resolved secret is prefixed with base64(`FAIRE_APP_ID:FAIRE_APP_SECRET`).
