@@ -4,9 +4,11 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+aes-gcm = "0.10"
 anyhow = "1.0.104"
 async-trait = "0.1.92"
 axum = { version = "0.8", features = ["macros"] }
+base64 = "0.22"
 chrono = { version = "0.4.45", features = ["serde"] }
 clap = { version = "4", features = ["derive", "env"] }
 hex = "0.4.3"

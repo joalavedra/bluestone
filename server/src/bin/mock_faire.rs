@@ -264,9 +264,50 @@ async fn main() -> anyhow::Result<()> {
             axum::routing::patch(patch_prices),
         )
         .route("/external-api/v2/orders", get(orders))
+        .route("/oauth2/authorize", get(oauth_authorize))
+        .route(
+            "/api/external-api-oauth2/token",
+            axum::routing::post(oauth_token),
+        )
         .with_state(state);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     eprintln!("mock Faire on http://{addr} (credential ZGV2OmRldg==:faire_dev_mock)");
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+/// Consent screen stand-in: approves immediately and redirects back with a code.
+async fn oauth_authorize(
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let (Some(redirect), Some(state)) = (q.get("redirectUrl"), q.get("state")) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            "redirectUrl and state are required",
+        )
+            .into_response();
+    };
+    axum::response::Redirect::to(&format!(
+        "{redirect}?authorization_code=mock_code&state={state}"
+    ))
+    .into_response()
+}
+
+async fn oauth_token(
+    State(s): State<Shared>,
+    Json(b): Json<Value>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let code = b["authorizationCode"]
+        .as_str()
+        .or(b["authorization_code"].as_str());
+    if code != Some("mock_code") || b["applicationId"].as_str() != Some("dev") {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "invalid code or application" })),
+        ));
+    }
+    Ok(Json(
+        json!({ "access_token": s.2.clone(), "token_type": "BEARER" }),
+    ))
 }

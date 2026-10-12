@@ -89,6 +89,7 @@ pub fn router(svc: AppState) -> Router {
         .route("/activity", get(activity))
         .route("/channels", get(channels).post(add_channel))
         .route("/channels/{id}/sync", post(sync_channel))
+        .route("/channels/{id}/connect", post(connect_channel))
         .route("/sync", post(sync_all))
         .layer(axum::middleware::from_fn_with_state(
             svc.clone(),
@@ -567,4 +568,79 @@ async fn so_action(
             )));
         }
     }))
+}
+
+/// Routes reached by third-party redirects, so they carry no bearer token.
+pub fn public_router(svc: AppState) -> Router {
+    Router::new()
+        .route("/oauth/faire/callback", get(faire_callback))
+        .with_state(svc)
+}
+
+#[derive(Deserialize)]
+struct OAuthCallback {
+    state: Option<String>,
+    authorization_code: Option<String>,
+    code: Option<String>,
+}
+
+async fn faire_callback(State(s): State<AppState>, Query(q): Query<OAuthCallback>) -> Response {
+    let ui = std::env::var("BLUESTONE_UI_URL").unwrap_or_else(|_| "http://localhost:3000".into());
+    let res = match (q.state, q.authorization_code.or(q.code)) {
+        (Some(state), Some(code)) => {
+            crate::credentials::faire_callback(&s.pool, &state, &code).await
+        }
+        _ => Err(anyhow::anyhow!(
+            "Faire did not return an authorization code (was access denied?)"
+        )),
+    };
+    match res {
+        Ok(id) => {
+            let _ = s
+                .log(
+                    &Principal::system(),
+                    "connect_channel",
+                    Some(("channel", id)),
+                    format!("connected Faire channel #{id} via OAuth"),
+                )
+                .await;
+            axum::response::Redirect::to(&format!(
+                "{}/channels?connected={id}",
+                ui.trim_end_matches('/')
+            ))
+            .into_response()
+        }
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            format!("Faire connection failed: {e:#}"),
+        )
+            .into_response(),
+    }
+}
+
+async fn connect_channel(
+    State(s): State<AppState>,
+    Extension(p): Extension<Principal>,
+    Path(id): Path<i64>,
+) -> R<Value> {
+    p.require(Scope::Admin)?;
+    if p.kind != "human" && p.kind != "system" {
+        return Err(ServiceError::Forbidden(
+            "only human tokens can connect accounts".into(),
+        ));
+    }
+    let kind: Option<(String,)> = sqlx::query_as("SELECT kind FROM channels WHERE id = ?")
+        .bind(id)
+        .fetch_optional(&s.pool)
+        .await
+        .map_err(anyhow::Error::from)?;
+    match kind.map(|k| k.0).as_deref() {
+        None => Err(ServiceError::NotFound(format!("channel {id} not found"))),
+        Some("faire") => Ok(Json(
+            json!({ "url": crate::credentials::faire_authorize_url(&s.pool, id).await? }),
+        )),
+        Some(_) => Err(ServiceError::Invalid(
+            "only Faire channels use Bluestone's own OAuth flow; use an env var or nango:<integration>/<connection>".into(),
+        )),
+    }
 }

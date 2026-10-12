@@ -185,6 +185,7 @@ function ChannelsPage() {
                         >
                           Sync now
                         </Button>
+                        {c.kind === "faire" && <FaireConnect channelId={c.id} />}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -236,5 +237,27 @@ claude mcp add bluestone \\
         </Card>
       </div>
     </>
+  )
+}
+
+function FaireConnect({ channelId }: { channelId: number }) {
+  const connect = useAction(() => post(`/channels/${channelId}/connect`))
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      className="ml-2"
+      disabled={connect.isPending}
+      onClick={() =>
+        connect.mutate(undefined, {
+          onSuccess: (r) => {
+            window.location.href = (r as { url: string }).url
+          },
+          onError: (e) => toast.error(e.message),
+        })
+      }
+    >
+      Connect Faire
+    </Button>
   )
 }

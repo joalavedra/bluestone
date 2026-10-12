@@ -223,6 +223,7 @@ async fn serve(
     let app = axum::Router::new()
         .route("/healthz", axum::routing::get(|| async { "ok" }))
         .nest("/api", api::router(svc.clone()))
+        .merge(api::public_router(svc.clone()))
         .route_service("/mcp", mcp)
         .layer(axum::middleware::from_fn_with_state(svc.clone(), mcp_auth))
         .layer(cors_layer());
