@@ -35,6 +35,7 @@ CREATE TABLE accounting_documents (
   status TEXT NOT NULL CHECK (status IN ('pending', 'exported', 'failed')),
   external_id TEXT,
   error TEXT,
+  claim TEXT,
   created_by TEXT,
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
   UNIQUE (connection_id, source, source_id)

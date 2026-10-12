@@ -13,12 +13,12 @@ pub struct Holded {
 }
 
 impl Holded {
-    pub fn new(c: Config) -> Self {
-        Self {
-            http: reqwest::Client::new(),
+    pub fn new(c: Config) -> Result<Self> {
+        Ok(Self {
+            http: super::http()?,
             base: format!("{}/api/invoicing/v1", c.base_url.trim_end_matches('/')),
             key: c.credential,
-        }
+        })
     }
 
     async fn post(&self, path: &str, body: Value) -> Result<String> {
@@ -100,6 +100,31 @@ impl Books for Holded {
 
     async fn item(&self, sku: &str, _name: &str) -> Result<String> {
         Ok(sku.to_owned())
+    }
+
+    async fn find_document(&self, party: Party, doc: &Doc) -> Result<Option<String>> {
+        let doc_type = match party {
+            Party::Supplier => "purchase",
+            Party::Customer => "invoice",
+        };
+        let docs: Vec<Value> = self
+            .http
+            .get(format!("{}/documents/{doc_type}", self.base))
+            .header("key", &self.key)
+            .send()
+            .await?
+            .error_for_status()
+            .context("Holded documents lookup failed")?
+            .json()
+            .await?;
+        Ok(docs
+            .iter()
+            .find(|d| {
+                d["docNumber"].as_str() == Some(doc.number.as_str())
+                    && d["contact"].as_str() == Some(doc.contact.as_str())
+            })
+            .and_then(|d| d["id"].as_str())
+            .map(str::to_owned))
     }
 
     async fn create_bill(&self, doc: &Doc) -> Result<String> {

@@ -19,6 +19,7 @@ pub struct AccountingConnection {
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct AccountingDocument {
     pub id: i64,
+    pub connection_id: i64,
     pub brand: String,
     /// `quickbooks` or `holded`.
     pub system: String,
@@ -61,7 +62,7 @@ struct ConnRow {
     expense_account: Option<String>,
 }
 
-const DOC_SELECT: &str = "SELECT d.id, b.name AS brand, c.kind AS system, d.source, d.source_id, d.status,
+const DOC_SELECT: &str = "SELECT d.id, d.connection_id, b.name AS brand, c.kind AS system, d.source, d.source_id, d.status,
   d.external_id, d.error, d.created_by, d.updated_at
 FROM accounting_documents d JOIN accounting_connections c ON c.id = d.connection_id JOIN brands b ON b.id = c.brand_id";
 
@@ -122,23 +123,49 @@ impl Service {
         .await?;
         let base_url = c.base_url.clone().unwrap_or_else(|| default_url.into());
         let mut tx = self.pool.begin().await?;
-        sqlx::query("UPDATE accounting_connections SET active = 0 WHERE brand_id = ?")
-            .bind(brand_id)
-            .execute(&mut *tx)
-            .await?;
-        let (id,): (i64,) = sqlx::query_as(
-            "INSERT INTO accounting_connections (brand_id, kind, base_url, realm, credential_env, income_account, expense_account)
-             VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id",
+        // Reconnecting the same company reuses its connection, so earlier exports still count.
+        let same: Option<(i64,)> = sqlx::query_as(
+            "SELECT id FROM accounting_connections WHERE brand_id = ? AND kind = ? AND base_url = ? AND realm IS ?
+             ORDER BY id DESC LIMIT 1",
         )
         .bind(brand_id)
         .bind(&c.kind)
         .bind(&base_url)
         .bind(&c.realm)
-        .bind(&c.credential_env)
-        .bind(&c.income_account)
-        .bind(&c.expense_account)
-        .fetch_one(&mut *tx)
+        .fetch_optional(&mut *tx)
         .await?;
+        sqlx::query("UPDATE accounting_connections SET active = 0 WHERE brand_id = ?")
+            .bind(brand_id)
+            .execute(&mut *tx)
+            .await?;
+        let id = if let Some((id,)) = same {
+            sqlx::query(
+                "UPDATE accounting_connections SET credential_env = ?, income_account = ?, expense_account = ?, active = 1
+                 WHERE id = ?",
+            )
+            .bind(&c.credential_env)
+            .bind(&c.income_account)
+            .bind(&c.expense_account)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+            id
+        } else {
+            let (id,): (i64,) = sqlx::query_as(
+                "INSERT INTO accounting_connections (brand_id, kind, base_url, realm, credential_env, income_account, expense_account)
+                 VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id",
+            )
+            .bind(brand_id)
+            .bind(&c.kind)
+            .bind(&base_url)
+            .bind(&c.realm)
+            .bind(&c.credential_env)
+            .bind(&c.income_account)
+            .bind(&c.expense_account)
+            .fetch_one(&mut *tx)
+            .await?;
+            id
+        };
         tx.commit().await?;
         self.log(
             who,
@@ -158,11 +185,19 @@ impl Service {
         )
         .fetch_all(&self.pool)
         .await?;
-        let documents = sqlx::query_as(&format!(
-            "{DOC_SELECT} WHERE c.active = 1 ORDER BY d.updated_at DESC, d.id DESC LIMIT 500"
+        let mut documents: Vec<AccountingDocument> = sqlx::query_as(&format!(
+            "{DOC_SELECT} ORDER BY d.updated_at DESC, d.id DESC LIMIT 500"
         ))
         .fetch_all(&self.pool)
         .await?;
+        // Provider errors can carry accounting details; agents only see that an export failed.
+        if who.kind != "human" && who.kind != "system" {
+            for d in &mut documents {
+                if d.error.is_some() {
+                    d.error = Some("export failed (details visible to human tokens)".into());
+                }
+            }
+        }
         Ok(AccountingOverview {
             connections,
             documents,
@@ -260,24 +295,26 @@ impl Service {
             ))
         })?;
         // Claim the document: a new row, a failed one, or a pending one abandoned for 10 minutes.
-        let claimed = sqlx::query(
-            "INSERT INTO accounting_documents (connection_id, source, source_id, status, created_by)
-             VALUES (?, ?, ?, 'pending', ?)
+        // The claim token makes a superseded export unable to overwrite the newer one's result.
+        let claim: Option<(String,)> = sqlx::query_as(
+            "INSERT INTO accounting_documents (connection_id, source, source_id, status, created_by, claim)
+             VALUES (?, ?, ?, 'pending', ?, lower(hex(randomblob(16))))
              ON CONFLICT(connection_id, source, source_id) DO UPDATE
-               SET status = 'pending', error = NULL, created_by = excluded.created_by,
+               SET status = 'pending', error = NULL, created_by = excluded.created_by, claim = excluded.claim,
                    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
              WHERE accounting_documents.status = 'failed'
                 OR (accounting_documents.status = 'pending'
-                    AND accounting_documents.updated_at < strftime('%Y-%m-%dT%H:%M:%SZ','now','-10 minutes'))",
+                    AND accounting_documents.updated_at < strftime('%Y-%m-%dT%H:%M:%SZ','now','-10 minutes'))
+             RETURNING claim",
         )
         .bind(conn.id)
         .bind(e.source)
         .bind(e.source_id)
         .bind(&who.name)
-        .execute(&self.pool)
+        .fetch_optional(&self.pool)
         .await?;
         let doc = self.document(conn.id, e.source, e.source_id).await?;
-        if claimed.rows_affected() == 0 {
+        let Some((claim,)) = claim else {
             return match doc.status.as_str() {
                 "exported" => Ok(doc),
                 _ => Err(ServiceError::Conflict(format!(
@@ -286,7 +323,14 @@ impl Service {
                     e.source_id
                 ))),
             };
-        }
+        };
+        let superseded = || {
+            ServiceError::Conflict(format!(
+                "{} #{} was taken over by a newer export",
+                e.source.replace('_', " "),
+                e.source_id
+            ))
+        };
         let what = if e.party == Party::Supplier {
             "bill"
         } else {
@@ -295,14 +339,18 @@ impl Service {
         let subject = Some((e.source, e.source_id));
         match self.push(&conn, &e).await {
             Ok(external_id) => {
-                sqlx::query(
+                let done = sqlx::query(
                     "UPDATE accounting_documents SET status = 'exported', external_id = ?,
-                     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?",
+                     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ? AND claim = ?",
                 )
                 .bind(&external_id)
                 .bind(doc.id)
+                .bind(&claim)
                 .execute(&self.pool)
                 .await?;
+                if done.rows_affected() == 0 {
+                    return Err(superseded());
+                }
                 self.log(
                     who,
                     "accounting_export",
@@ -314,19 +362,26 @@ impl Service {
             }
             Err(err) => {
                 let msg = format!("{err:#}");
-                sqlx::query(
+                let done = sqlx::query(
                     "UPDATE accounting_documents SET status = 'failed', error = ?,
-                     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?",
+                     updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ? AND claim = ?",
                 )
                 .bind(&msg)
                 .bind(doc.id)
+                .bind(&claim)
                 .execute(&self.pool)
                 .await?;
+                if done.rows_affected() == 0 {
+                    return Err(superseded());
+                }
                 self.log(
                     who,
                     "accounting_export_failed",
                     subject,
-                    format!("{} {what} failed in {}: {msg}", e.number, conn.kind),
+                    format!(
+                        "{} {what} failed in {} (error on the accounting status)",
+                        e.number, conn.kind
+                    ),
                 )
                 .await?;
                 Err(ServiceError::Internal(err))
@@ -383,6 +438,9 @@ impl Service {
             note: e.note.clone(),
             lines,
         };
+        if let Some(id) = books.find_document(e.party, &doc).await? {
+            return Ok(id);
+        }
         match e.party {
             Party::Supplier => books.create_bill(&doc).await,
             Party::Customer => books.create_invoice(&doc).await,

@@ -54,7 +54,7 @@ fn holded_auth(m: &Mock, h: &HeaderMap) -> Result<(), Reply> {
     }
 }
 
-/// Supports `select Id from <Entity> where <Field> = '<value>'`.
+/// Supports `select * from <Entity> where <Field> = '<value>'`.
 async fn qbo_query(
     State(m): State<Shared>,
     h: HeaderMap,
@@ -79,7 +79,7 @@ async fn qbo_query(
         .into_iter()
         .flatten()
         .filter(|e| e[*field].as_str() == Some(value.as_str()))
-        .map(|e| json!({ "Id": e["Id"] }))
+        .cloned()
         .collect();
     let body = if hits.is_empty() {
         json!({ "QueryResponse": {} })
@@ -213,10 +213,29 @@ async fn holded_create_document(
     store.next += 1;
     let id = format!("hd{:022}", store.next);
     body["id"] = json!(id);
+    body["docNumber"] = body["invoiceNum"].clone();
+    body["contact"] = body["contactId"].clone();
     store.holded.entry(doc_type).or_default().push(body);
     (
         StatusCode::CREATED,
         Json(json!({ "status": 1, "info": "Created", "id": id })),
+    )
+}
+
+async fn holded_documents(
+    State(m): State<Shared>,
+    h: HeaderMap,
+    Path(doc_type): Path<String>,
+) -> Reply {
+    if let Err(e) = holded_auth(&m, &h) {
+        return e;
+    }
+    let store = m.store.lock().unwrap();
+    (
+        StatusCode::OK,
+        Json(json!(
+            store.holded.get(&doc_type).cloned().unwrap_or_default()
+        )),
     )
 }
 
@@ -242,7 +261,7 @@ async fn main() -> anyhow::Result<()> {
         )
         .route(
             "/api/invoicing/v1/documents/{doc_type}",
-            post(holded_create_document),
+            get(holded_documents).post(holded_create_document),
         )
         .route("/_dump", get(dump))
         .with_state(m);

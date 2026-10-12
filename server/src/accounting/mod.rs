@@ -53,6 +53,9 @@ pub trait Books: Send + Sync {
     async fn item(&self, sku: &str, name: &str) -> Result<String>;
     async fn create_bill(&self, doc: &Doc) -> Result<String>;
     async fn create_invoice(&self, doc: &Doc) -> Result<String>;
+    /// Finds a bill/invoice already created for this document number and contact, so a retry after
+    /// a lost response doesn't create it twice.
+    async fn find_document(&self, party: Party, doc: &Doc) -> Result<Option<String>>;
 }
 
 pub struct Config {
@@ -77,11 +80,18 @@ pub fn default_base_url(kind: &str) -> Option<&'static str> {
 pub fn build(c: Config) -> Result<Box<dyn Books>> {
     Ok(match c.kind.as_str() {
         "quickbooks" => Box::new(quickbooks::QuickBooks::new(c)?),
-        "holded" => Box::new(holded::Holded::new(c)),
+        "holded" => Box::new(holded::Holded::new(c)?),
         k => bail!("unknown accounting system `{k}`"),
     })
 }
 
 pub(crate) fn amount(quantity: f64, unit_price: f64) -> f64 {
     (quantity * unit_price * 100.0).round() / 100.0
+}
+
+/// HTTP client with a request timeout, so an export can't hang past its claim.
+pub fn http() -> Result<reqwest::Client> {
+    Ok(reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()?)
 }

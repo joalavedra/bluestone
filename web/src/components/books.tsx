@@ -33,7 +33,8 @@ export function BooksButton({
   const system = systems[conn.kind] ?? conn.kind
   const what = source === "purchase_order" ? "bill" : "invoice"
   const doc = data?.documents.find(
-    (d) => d.source === source && d.source_id === id && d.system === conn.kind
+    (d) =>
+      d.source === source && d.source_id === id && d.connection_id === conn.id
   )
   if (doc?.status === "exported")
     return (

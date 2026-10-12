@@ -43,11 +43,24 @@ curl "${H[@]}" -X POST "$API/sales-orders/$SO/export" | jq -c '{system, source, 
 books '.quickbooks | {customers: [.Customer[].DisplayName], invoices: [.Invoice[] | {DocNumber, TotalAmt, PrivateNote}]}'
 test "$(books '.quickbooks.Invoice[0].TotalAmt')" = 55 && test "$(books '.quickbooks.Item | length')" = 1
 
-echo "--- a failed export is recorded with its error"
-curl "${H[@]}" -X POST $API/accounting -d '{"brand":"Northwind Coffee","kind":"quickbooks","base_url":"http://127.0.0.1:18890","realm":"9130","credential_env":"QBO_BAD_TOKEN","income_account":"79","expense_account":"80"}' >/dev/null
-test "$(code "$HUMAN" "purchase-orders/$PO/export")" = 500
+echo "--- reconnecting the same company keeps its exports; failures are recorded, hidden from agents, retryable"
+curl "${H[@]}" -X POST $API/accounting -d '{"brand":"Northwind Coffee","kind":"quickbooks","realm":"9130","income_account":"79","expense_account":"80","base_url":"http://127.0.0.1:18890","credential_env":"QBO_BAD_TOKEN"}' >/dev/null
+test "$(curl "${H[@]}" -X POST "$API/purchase-orders/$PO/export" | jq -r .external_id)" = "$BILL"
+SO2=$(curl "${H[@]}" -X POST $API/sales-orders -d '{"brand":"Northwind Coffee","customer":"Bar Nou","lines":[{"item":"NW-ESP-250","quantity":2,"unit_price":5.5}]}' | jq .id)
+curl "${H[@]}" -X POST "$API/sales-orders/$SO2/confirm" >/dev/null
+test "$(code "$HUMAN" "sales-orders/$SO2/export")" = 500
 curl "${H[@]}" $API/accounting | jq -c '.documents[0] | {status, error}'
 test "$(curl "${H[@]}" $API/accounting | jq -r '.documents[0].status')" = failed
+AGENT_ERR=$(curl -sf -H "Authorization: Bearer $AGENT" $API/accounting | jq -r '.documents[0].error')
+echo "agent sees: $AGENT_ERR"; test "$AGENT_ERR" = "export failed (details visible to human tokens)"
+curl "${H[@]}" -X POST $API/accounting -d '{"brand":"Northwind Coffee","kind":"quickbooks","realm":"9130","income_account":"79","expense_account":"80","base_url":"http://127.0.0.1:18890","credential_env":"QBO_DEV_TOKEN"}' >/dev/null
+curl "${H[@]}" -X POST "$API/sales-orders/$SO2/export" | jq -c '{status, external_id}'
+test "$(books '.quickbooks.Invoice | length')" = 2
+
+echo "--- a new connection to the same books adopts the existing bill instead of creating another"
+curl "${H[@]}" -X POST $API/accounting -d '{"brand":"Northwind Coffee","kind":"quickbooks","realm":"9130","income_account":"79","expense_account":"80","base_url":"http://localhost:18890","credential_env":"QBO_DEV_TOKEN"}' >/dev/null
+test "$(curl "${H[@]}" -X POST "$API/purchase-orders/$PO/export" | jq -r .external_id)" = "$BILL"
+test "$(books '.quickbooks.Bill | length')" = 1
 
 echo "--- switch the brand to Holded and export the same orders"
 curl "${H[@]}" -X POST $API/accounting -d '{"brand":"Northwind Coffee","kind":"holded","base_url":"http://127.0.0.1:18890","credential_env":"HOLDED_DEV_KEY"}' >/dev/null
@@ -55,6 +68,6 @@ curl "${H[@]}" -X POST "$API/purchase-orders/$PO/export" | jq -c '{system, statu
 curl "${H[@]}" -X POST "$API/sales-orders/$SO/export" | jq -c '{system, status, external_id}'
 books '.holded | {contacts: [.contacts[] | {name, type}], purchase: [.purchase[] | {invoiceNum, items}], invoice: [.invoice[] | .invoiceNum]}'
 test "$(books '.holded.contacts | length')" = 2 && test "$(books '.holded.purchase | length')" = 1 && test "$(books '.holded.invoice | length')" = 1
-test "$(curl "${H[@]}" $API/accounting | jq '[.documents[] | select(.status == "exported")] | length')" = 2
+test "$(curl "${H[@]}" $API/accounting | jq '[.documents[] | select(.status == "exported")] | length')" = 6
 curl "${H[@]}" "$API/activity?limit=50" | jq -r '.[] | select(.action | startswith("accounting")) | .summary' | head -5
 echo "accounting smoke OK"

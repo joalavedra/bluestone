@@ -375,6 +375,7 @@ export const useActivity = (actorKind: string) =>
 /** Mutation that refreshes every query on success — the dataset is small and views overlap heavily. */
 export interface AccountingDocument {
   id: number
+  connection_id: number
   brand: string
   system: string
   source: "purchase_order" | "sales_order"

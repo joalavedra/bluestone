@@ -21,7 +21,7 @@ impl QuickBooks {
             .realm
             .context("QuickBooks needs the company id (--realm)")?;
         Ok(Self {
-            http: reqwest::Client::new(),
+            http: super::http()?,
             base: format!("{}/v3/company/{realm}", c.base_url.trim_end_matches('/')),
             token: c.credential,
             income_account: c
@@ -33,9 +33,9 @@ impl QuickBooks {
         })
     }
 
-    async fn find(&self, entity: &str, field: &str, value: &str) -> Result<Option<String>> {
+    async fn query(&self, entity: &str, field: &str, value: &str) -> Result<Vec<Value>> {
         let q = format!(
-            "select Id from {entity} where {field} = '{}'",
+            "select * from {entity} where {field} = '{}'",
             value.replace('\\', "\\\\").replace('\'', "\\'")
         );
         let v: Value = self
@@ -50,8 +50,21 @@ impl QuickBooks {
             .with_context(|| format!("QuickBooks {entity} query failed"))?
             .json()
             .await?;
-        Ok(v["QueryResponse"][entity][0]["Id"]
-            .as_str()
+        Ok(v["QueryResponse"][entity]
+            .as_array()
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    /// Id of the record whose `field` is exactly `value`. Results are re-checked locally so query
+    /// escaping quirks can never select a different record.
+    async fn find(&self, entity: &str, field: &str, value: &str) -> Result<Option<String>> {
+        Ok(self
+            .query(entity, field, value)
+            .await?
+            .iter()
+            .find(|e| e[field].as_str() == Some(value))
+            .and_then(|e| e["Id"].as_str())
             .map(str::to_owned))
     }
 
@@ -138,6 +151,23 @@ impl Books for QuickBooks {
             }),
         )
         .await
+    }
+
+    async fn find_document(&self, party: Party, doc: &Doc) -> Result<Option<String>> {
+        let (entity, party_ref) = match party {
+            Party::Supplier => ("Bill", "VendorRef"),
+            Party::Customer => ("Invoice", "CustomerRef"),
+        };
+        Ok(self
+            .query(entity, "DocNumber", &doc.number)
+            .await?
+            .iter()
+            .find(|e| {
+                e["DocNumber"].as_str() == Some(doc.number.as_str())
+                    && e[party_ref]["value"].as_str() == Some(doc.contact.as_str())
+            })
+            .and_then(|e| e["Id"].as_str())
+            .map(str::to_owned))
     }
 
     async fn create_invoice(&self, doc: &Doc) -> Result<String> {
