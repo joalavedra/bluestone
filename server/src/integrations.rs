@@ -65,7 +65,7 @@ pub struct Credential {
 pub struct Connector {
     pub id: &'static str,
     pub name: &'static str,
-    /// `sales_channel`, `accounting` or `email`.
+    /// `sales_channel`, `accounting`, `erp` or `email`.
     pub category: &'static str,
     pub description: &'static str,
     /// `available` or `coming_soon`.
@@ -193,6 +193,46 @@ pub fn catalog() -> Vec<Connector> {
                 reference_example: "HOLDED_KEY or nango:holded/my-brand",
             }),
         },
+        Connector {
+            id: "holded_erp",
+            name: "Holded (ERP)",
+            category: "erp",
+            description: "Products with their Holded codes and stock, matched to items by SKU; invoices for reporting (Intrastat); confirmed sales orders pushed as Holded sales orders.",
+            status: "available",
+            fields: vec![
+                Field::new("base_url", "API address", "url").default("https://api.holded.com"),
+            ],
+            credential: Some(Credential {
+                label: "API key",
+                help: "Holded → Settings → Developers → New API key. The same key works for Holded accounting.",
+                oauth: false,
+                reference_example: "HOLDED_KEY or nango:holded/my-brand",
+            }),
+        },
+        soon(
+            "odoo",
+            "Odoo",
+            "erp",
+            "Products, stock, invoices and sales orders in Odoo.",
+        ),
+        soon(
+            "icg",
+            "ICG",
+            "erp",
+            "Products, invoices and orders in ICG Manager.",
+        ),
+        soon(
+            "sage",
+            "Sage 200",
+            "erp",
+            "Products, invoices and orders in Sage 200.",
+        ),
+        soon(
+            "a3erp",
+            "a3ERP",
+            "erp",
+            "Products, invoices and orders in a3ERP.",
+        ),
         soon(
             "amazon",
             "Amazon Seller Central",
@@ -236,7 +276,7 @@ pub struct IntegrationInput {
 #[derive(Debug, Serialize)]
 pub struct Connection {
     pub connector: String,
-    /// `channel` or `accounting`.
+    /// `channel`, `accounting` or `erp`.
     pub kind: &'static str,
     pub id: i64,
     pub brand: String,
@@ -301,6 +341,11 @@ fn admin_human(who: &Principal) -> SResult<()> {
         ));
     }
     Ok(())
+}
+
+/// The stored connection kind: catalog ids are unique, so the Holded ERP is `holded_erp`.
+fn kind_of(c: &Connector) -> &'static str {
+    c.id.strip_suffix("_erp").unwrap_or(c.id)
 }
 
 fn connector(id: &str) -> SResult<Connector> {
@@ -416,6 +461,41 @@ impl Service {
                 }
             },
         ));
+        type ErpRow = (
+            i64,
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+        );
+        let erps: Vec<ErpRow> = sqlx::query_as(
+            "SELECT e.id, b.name, e.kind, e.base_url, e.credential_env, e.last_synced_at, e.last_sync_error
+             FROM erp_connections e JOIN brands b ON b.id = e.brand_id WHERE e.active = 1 ORDER BY b.name",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let human = who.kind == "human" || who.kind == "system";
+        connections.extend(erps.into_iter().map(
+            |(id, brand, kind, base_url, cred, synced, error)| Connection {
+                label: format!("{} (ERP)", crate::erp::label(&kind)),
+                connector: format!("{kind}_erp"),
+                kind: "erp",
+                id,
+                brand,
+                fields: BTreeMap::from([("base_url".to_owned(), base_url)]),
+                credential_source: source(&cred),
+                last_synced_at: synced,
+                error: error.map(|e| {
+                    if human {
+                        e
+                    } else {
+                        "sync failed (details visible to human tokens)".into()
+                    }
+                }),
+            },
+        ));
         Ok(IntegrationsOverview {
             connectors: catalog(),
             connections,
@@ -428,7 +508,16 @@ impl Service {
         brand: &str,
         vals: &BTreeMap<&'static str, String>,
     ) -> SResult<Option<(String, i64, String)>> {
-        Ok(if c.category == "sales_channel" {
+        Ok(if c.category == "erp" {
+            sqlx::query_as(
+                "SELECT e.credential_env, 0, e.base_url FROM erp_connections e JOIN brands b ON b.id = e.brand_id
+                 WHERE b.name = ? AND e.kind = ? AND e.active = 1",
+            )
+            .bind(brand)
+            .bind(kind_of(c))
+            .fetch_optional(&self.pool)
+            .await?
+        } else if c.category == "sales_channel" {
             sqlx::query_as(
                 "SELECT c.credential_env, c.id, c.base_url FROM channels c JOIN brands b ON b.id = c.brand_id
                  WHERE b.name = ? AND c.name = ? AND c.kind = ?",
@@ -524,6 +613,10 @@ impl Service {
                     catalog.locations.len(),
                     orders.len()
                 )
+            } else if c.category == "erp" {
+                crate::erp::build(kind_of(&c), &base_url, token)?
+                    .check()
+                    .await?
             } else {
                 accounting::build(Config {
                     kind: c.id.into(),
@@ -575,7 +668,19 @@ impl Service {
             Cred::Oauth => OAUTH.into(),
         };
         let brand = i.brand.trim().to_owned();
-        let saved = if c.category == "sales_channel" {
+        let saved = if c.category == "erp" {
+            self.set_erp(
+                who,
+                &crate::erp_sync::NewErpConnection {
+                    brand,
+                    kind: kind_of(&c).into(),
+                    base_url: vals.get("base_url").cloned(),
+                    credential_env: credential_env.clone(),
+                },
+            )
+            .await
+            .map(|id| ("erp", id))
+        } else if c.category == "sales_channel" {
             self.add_channel(
                 who,
                 &NewChannel {

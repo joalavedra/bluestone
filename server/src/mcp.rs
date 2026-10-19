@@ -532,6 +532,41 @@ impl BluestoneMcp {
         )
     }
 
+    #[tool(
+        description = "ERP connections per brand (last product pull, how many ERP products match a Bluestone item by SKU) and sales orders pushed to the ERP."
+    )]
+    async fn erp_status(
+        &self,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let p = self.principal(&ctx)?;
+        done(self.svc.erp(&p).await)
+    }
+
+    #[tool(
+        description = "Pull the brand's ERP products (ERP code, SKU, stock) and match them to items by SKU. Read-only on the ERP."
+    )]
+    async fn sync_erp(
+        &self,
+        ctx: RequestContext<RoleServer>,
+        Parameters(a): Parameters<crate::erp_sync::ErpBrandArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let p = self.principal(&ctx)?;
+        done(self.svc.sync_erp(&p, &a.brand).await)
+    }
+
+    #[tool(
+        description = "Read the brand's customer invoices from its ERP for a date range, with customer country, currency and lines (SKU, quantity, amount before tax). Read live, nothing is stored. Useful for Intrastat and sales reporting."
+    )]
+    async fn list_erp_invoices(
+        &self,
+        ctx: RequestContext<RoleServer>,
+        Parameters(a): Parameters<crate::erp_sync::ErpInvoiceArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let p = self.principal(&ctx)?;
+        done(self.svc.erp_invoices(&p, &a).await)
+    }
+
     #[tool(description = "Get one sales order with its lines.")]
     async fn get_sales_order(
         &self,

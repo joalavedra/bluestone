@@ -25,6 +25,7 @@ jobs:
       - run: ../dev/smoke-faire.sh
       - run: ../dev/smoke-accounting.sh
       - run: ../dev/smoke-integrations.sh
+      - run: ../dev/smoke-erp.sh
 
   web:
     runs-on: ubuntu-latest

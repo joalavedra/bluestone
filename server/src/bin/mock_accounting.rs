@@ -1,5 +1,6 @@
 //! Local mock of the QuickBooks Online v3 and Holded invoicing v1 APIs, for dev and smoke tests.
-//! `GET /_dump` returns everything that was created.
+//! `GET /_dump` returns everything that was created. `MOCK_HOLDED_SEED=1` preloads Holded ERP
+//! products, a French customer and one invoice.
 
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -222,11 +223,51 @@ async fn holded_create_document(
     )
 }
 
+/// Supports Holded's `starttmp` / `endtmp` (unix seconds) filters on the document date.
 async fn holded_documents(
     State(m): State<Shared>,
     h: HeaderMap,
     Path(doc_type): Path<String>,
+    Query(q): Query<HashMap<String, String>>,
 ) -> Reply {
+    if let Err(e) = holded_auth(&m, &h) {
+        return e;
+    }
+    let bound = |k: &str| q.get(k).and_then(|v| v.parse::<i64>().ok());
+    let (from, to) = (bound("starttmp"), bound("endtmp"));
+    let store = m.store.lock().unwrap();
+    let docs: Vec<Value> = store
+        .holded
+        .get(&doc_type)
+        .into_iter()
+        .flatten()
+        .filter(|d| {
+            let t = d["date"].as_i64().unwrap_or(0);
+            from.is_none_or(|f| t >= f) && to.is_none_or(|e| t <= e)
+        })
+        .cloned()
+        .collect();
+    (StatusCode::OK, Json(json!(docs)))
+}
+
+async fn holded_contact(State(m): State<Shared>, h: HeaderMap, Path(id): Path<String>) -> Reply {
+    if let Err(e) = holded_auth(&m, &h) {
+        return e;
+    }
+    let store = m.store.lock().unwrap();
+    match store
+        .holded
+        .get("contacts")
+        .into_iter()
+        .flatten()
+        .find(|c| c["id"] == id.as_str())
+    {
+        Some(c) => (StatusCode::OK, Json(c.clone())),
+        None => err(StatusCode::NOT_FOUND, "contact not found"),
+    }
+}
+
+async fn holded_products(State(m): State<Shared>, h: HeaderMap) -> Reply {
     if let Err(e) = holded_auth(&m, &h) {
         return e;
     }
@@ -234,9 +275,41 @@ async fn holded_documents(
     (
         StatusCode::OK,
         Json(json!(
-            store.holded.get(&doc_type).cloned().unwrap_or_default()
+            store.holded.get("products").cloned().unwrap_or_default()
         )),
     )
+}
+
+fn holded_seed(store: &mut Store) {
+    let products = [
+        ("hp001", "NW-ESP-250", "Espresso blend 250g", 31.0),
+        ("hp002", "NW-ETH-250", "Ethiopia Guji 250g", 12.0),
+        ("hp003", "", "Gift wrapping", 0.0),
+    ];
+    store.holded.insert(
+        "products".into(),
+        products
+            .iter()
+            .map(|(id, sku, name, stock)| json!({ "id": id, "sku": sku, "name": name, "stock": stock }))
+            .collect(),
+    );
+    store.holded.insert(
+        "contacts".into(),
+        vec![
+            json!({ "id": "hcboutique", "name": "Boutique Lyon", "type": "client",
+                     "billAddress": { "countryCode": "FR", "city": "Lyon" } }),
+        ],
+    );
+    // 2026-09-15 12:00 UTC.
+    store.holded.insert(
+        "invoice".into(),
+        vec![json!({ "id": "hdinv1", "docNumber": "F260042", "contact": "hcboutique", "contactName": "Boutique Lyon",
+                     "date": 1789473600, "currency": "eur", "total": 117.37,
+                     "products": [
+                        { "name": "Espresso blend 250g", "sku": "NW-ESP-250", "units": 10, "price": 6.5 },
+                        { "name": "Ethiopia Guji 250g", "sku": "NW-ETH-250", "units": 4, "price": 8.0 },
+                     ] })],
+    );
 }
 
 async fn qbo_company(
@@ -266,8 +339,12 @@ async fn dump(State(m): State<Shared>) -> Json<Value> {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let addr = std::env::var("MOCK_ACCOUNTING_ADDR").unwrap_or_else(|_| "127.0.0.1:8790".into());
+    let mut store = Store::default();
+    if std::env::var("MOCK_HOLDED_SEED").is_ok_and(|v| v == "1") {
+        holded_seed(&mut store);
+    }
     let m: Shared = Arc::new(Mock {
-        store: Mutex::default(),
+        store: Mutex::new(store),
         qbo_token: std::env::var("MOCK_QUICKBOOKS_TOKEN").unwrap_or_else(|_| "qbo_dev_mock".into()),
         holded_key: std::env::var("MOCK_HOLDED_KEY").unwrap_or_else(|_| "holded_dev_mock".into()),
     });
@@ -279,6 +356,8 @@ async fn main() -> anyhow::Result<()> {
             "/api/invoicing/v1/contacts",
             get(holded_contacts).post(holded_create_contact),
         )
+        .route("/api/invoicing/v1/contacts/{id}", get(holded_contact))
+        .route("/api/invoicing/v1/products", get(holded_products))
         .route(
             "/api/invoicing/v1/documents/{doc_type}",
             get(holded_documents).post(holded_create_document),

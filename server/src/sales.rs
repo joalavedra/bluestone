@@ -410,6 +410,7 @@ impl Service {
         who.require(Scope::Approve)?;
         human(who, "cancel sales orders")?;
         self.ensure_not_booked("sales_order", id).await?;
+        self.ensure_not_in_erp(id).await?;
         let row = self
             .so_transition(who, id, "confirmed", "cancelled", "cancelled")
             .await?;

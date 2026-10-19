@@ -37,6 +37,7 @@ const categories = [
   ["all", "All"],
   ["sales_channel", "Sales channels"],
   ["accounting", "Accounting"],
+  ["erp", "ERP"],
   ["email", "Email"],
 ] as const
 
@@ -61,6 +62,7 @@ function SettingsPage() {
   const request = useAction((id: string) =>
     post("/integrations/request", { connector: id })
   )
+  const syncErp = useAction((brand: string) => post("/erp/sync", { brand }))
   const q = query.trim().toLowerCase()
   const connectors = (data?.connectors ?? []).filter(
     (c) =>
@@ -71,7 +73,7 @@ function SettingsPage() {
     <>
       <PageHeader
         title="Settings"
-        description="Integrations: find the shop, marketplace or accounting system a brand uses and connect it."
+        description="Integrations: find the shop, marketplace, accounting system or ERP a brand uses and connect it."
       />
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <div className="relative w-full max-w-sm">
@@ -126,7 +128,7 @@ function SettingsPage() {
                       </div>
                       <div className="text-xs text-muted-foreground">
                         {sourceLabel[x.credential_source]}
-                        {x.kind === "channel" &&
+                        {x.kind !== "accounting" &&
                           ` · synced ${ago(x.last_synced_at)}`}
                       </div>
                       {x.error && (
@@ -138,15 +140,40 @@ function SettingsPage() {
                         </div>
                       )}
                     </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() =>
-                        setEditing({ connector: c, connection: x })
-                      }
-                    >
-                      Edit
-                    </Button>
+                    <div className="flex shrink-0 gap-1">
+                      {x.kind === "erp" && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={syncErp.isPending}
+                          onClick={() =>
+                            syncErp.mutate(x.brand, {
+                              onSuccess: (r) => {
+                                const s = r as {
+                                  products: number
+                                  matched: number
+                                }
+                                toast.success(
+                                  `${s.products} products, ${s.matched} matched to items`
+                                )
+                              },
+                              onError: (e) => toast.error(e.message),
+                            })
+                          }
+                        >
+                          Sync
+                        </Button>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() =>
+                          setEditing({ connector: c, connection: x })
+                        }
+                      >
+                        Edit
+                      </Button>
+                    </div>
                   </div>
                 ))}
                 {soon ? (

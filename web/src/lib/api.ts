@@ -214,6 +214,13 @@ export interface ItemDetail extends ItemSummary {
     quantity: number
   }>
   ledger: Array<LedgerEntry>
+  /** The item's product in its brand's ERP (same SKU), from the last ERP sync. */
+  erp: Array<{
+    system: string
+    code: string
+    name: string
+    stock: number | null
+  }>
 }
 
 export interface Me {
@@ -398,6 +405,36 @@ export interface AccountingOverview {
   documents: Array<AccountingDocument>
 }
 
+export interface ErpOrder {
+  id: number
+  connection_id: number
+  brand: string
+  system: string
+  sales_order_id: number
+  status: "pending" | "exported" | "failed"
+  external_id: string | null
+  error: string | null
+  created_by: string | null
+  updated_at: string
+}
+
+export interface ErpOverview {
+  connections: Array<{
+    id: number
+    brand: string
+    kind: string
+    base_url: string
+    last_synced_at: string | null
+    last_sync_error: string | null
+    products: number
+    matched: number
+  }>
+  orders: Array<ErpOrder>
+}
+
+export const useErp = () =>
+  useQuery({ queryKey: ["erp"], queryFn: () => api<ErpOverview>("/erp") })
+
 export const useAccounting = () =>
   useQuery({
     queryKey: ["accounting"],
@@ -431,7 +468,7 @@ export interface IntegrationField {
 export interface IntegrationConnector {
   id: string
   name: string
-  category: "sales_channel" | "accounting" | "email"
+  category: "sales_channel" | "accounting" | "erp" | "email"
   description: string
   status: "available" | "coming_soon"
   fields: Array<IntegrationField>
@@ -445,7 +482,7 @@ export interface IntegrationConnector {
 
 export interface IntegrationConnection {
   connector: string
-  kind: "channel" | "accounting"
+  kind: "channel" | "accounting" | "erp"
   id: number
   brand: string
   label: string

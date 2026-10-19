@@ -5,6 +5,8 @@ pub mod auth;
 pub mod connectors;
 pub mod credentials;
 pub mod db;
+pub mod erp;
+pub mod erp_sync;
 pub mod forecast;
 pub mod integrations;
 pub mod ledger;

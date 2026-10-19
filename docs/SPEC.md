@@ -158,7 +158,7 @@ Faire (not supported by Nango) uses the built-in flow: `POST /api/channels/{id}/
 `server/src/integrations.rs` holds the connector catalog: each connector declares its category, status (`available` / `coming_soon`), form fields (label, required, default, help) and credential (label, help, whether a provider login can replace it). The UI builds each setup form from that, so a new connector gets a setup screen by adding a catalog entry.
 
 - `GET /integrations` (read scope): catalog plus current connections (channels and active accounting connections) with non-secret fields and `credential_source` (`stored`, `env`, `nango`, `oauth`); keys are never returned.
-- `POST /integrations/test` (human admin): resolves the credential and makes one read-only call (channels: fetch the catalog and report listings/locations; accounting: `Books::check`, e.g. QuickBooks `companyinfo`), with a 30 s limit. Nothing is saved.
+- `POST /integrations/test` (human admin): resolves the credential and makes one read-only call (channels: fetch the catalog and report listings/locations; accounting: `Books::check`, e.g. QuickBooks `companyinfo`; ERP: `Erp::check`), with a 30 s limit. Nothing is saved.
 - `POST /integrations` (human admin): `secret` (pasted, stored encrypted as `secret:<id>`) or `credential_ref` (env var or `nango:…`); with neither, the existing connection keeps its credential, and Faire falls back to its OAuth connect (`needs_oauth`). Saves through `add_channel` / `set_accounting`, then deletes pasted keys nothing references any more.
 - `POST /integrations/request`: logs `integration_request` for a coming-soon connector.
 
@@ -175,3 +175,14 @@ One accounting system per brand, behind the `accounting::Books` trait. QuickBook
 - **API:** `POST /api/purchase-orders/{id}/export`, `POST /api/sales-orders/{id}/export`.
 - **Dev:** `server/target/debug/mock_accounting` mocks both APIs (`GET /_dump` shows what was created); `dev/smoke-accounting.sh` covers both systems.
 - **Not yet:** taxes (Holded applies its defaults; QuickBooks lines are sent without tax codes), payments, pulling costs back, posting stock value/COGS journals.
+
+## ERP
+
+One ERP per brand (Holded today; Odoo, ICG, Sage 200, a3ERP listed as coming soon), behind the `erp::Erp` trait: `check`, `products`, `invoices(from, to)`, `find_order`, `create_order`. A new ERP is one adapter plus a catalog entry in Settings → Integrations (category `erp`). The ERP can be the same system as the brand's accounting (Holded uses the same key for both).
+
+- **Products:** `POST /api/erp/sync {brand}` (read scope; MCP `sync_erp`) replaces `erp_products` with the ERP's products (code, SKU, name, stock). They join items on (brand, SKU), so merges and new items need no relinking. `GET /api/items/{id}` returns `erp: [{system, code, name, stock}]`.
+- **Invoices:** `GET /api/erp/invoices?brand&from&to` (read scope; MCP `list_erp_invoices`) reads customer invoices live with customer country, currency and lines (SKU, quantity, amount before tax). Nothing is stored. This is the input for Intrastat.
+- **Orders:** `POST /api/sales-orders/{id}/erp` (human `approve` only) pushes a confirmed/fulfilled SO as an ERP order numbered `SO-<id>`. Idempotent like accounting: `erp_orders` keeps one row per (connection, SO), a claim token guards retries, and the ERP is searched for `SO-<id>` before creating. An SO in the ERP can't be cancelled in Bluestone.
+- **Agents** read `GET /api/erp` (and MCP `erp_status`); provider error details are shown to human tokens only.
+- **Not yet:** writing stock to the ERP (Bluestone vs ERP as stock owner is an open decision), importing channel orders as SOs, ERP purchase orders.
+- **Dev:** `MOCK_HOLDED_SEED=1 mock_accounting` adds Holded products, a French customer and an invoice; `dev/smoke-erp.sh` covers the flow.

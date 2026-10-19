@@ -89,6 +89,10 @@ pub fn router(svc: AppState) -> Router {
         .route("/sales-orders/{id}/{action}", post(so_action))
         .route("/purchase-orders/{id}/export", post(export_po))
         .route("/accounting", get(accounting).post(set_accounting))
+        .route("/erp", get(erp).post(set_erp))
+        .route("/erp/sync", post(sync_erp))
+        .route("/erp/invoices", get(erp_invoices))
+        .route("/sales-orders/{id}/erp", post(push_so_to_erp))
         .route("/activity", get(activity))
         .route("/integrations", get(integrations).post(save_integration))
         .route("/integrations/test", post(test_integration))
@@ -680,6 +684,45 @@ async fn export_so(
     Path(id): Path<i64>,
 ) -> R<crate::accounting_sync::AccountingDocument> {
     Ok(Json(s.export_so(&p, id).await?))
+}
+
+async fn erp(
+    State(s): State<AppState>,
+    Extension(p): Extension<Principal>,
+) -> R<crate::erp_sync::ErpOverview> {
+    Ok(Json(s.erp(&p).await?))
+}
+
+async fn set_erp(
+    State(s): State<AppState>,
+    Extension(p): Extension<Principal>,
+    Json(c): Json<crate::erp_sync::NewErpConnection>,
+) -> R<Value> {
+    Ok(Json(json!({ "id": s.set_erp(&p, &c).await? })))
+}
+
+async fn sync_erp(
+    State(s): State<AppState>,
+    Extension(p): Extension<Principal>,
+    Json(a): Json<crate::erp_sync::ErpBrandArgs>,
+) -> R<crate::erp_sync::ErpConnection> {
+    Ok(Json(s.sync_erp(&p, &a.brand).await?))
+}
+
+async fn erp_invoices(
+    State(s): State<AppState>,
+    Extension(p): Extension<Principal>,
+    Query(a): Query<crate::erp_sync::ErpInvoiceArgs>,
+) -> R<Vec<crate::erp::Invoice>> {
+    Ok(Json(s.erp_invoices(&p, &a).await?))
+}
+
+async fn push_so_to_erp(
+    State(s): State<AppState>,
+    Extension(p): Extension<Principal>,
+    Path(id): Path<i64>,
+) -> R<crate::erp_sync::ErpOrder> {
+    Ok(Json(s.push_so_to_erp(&p, id).await?))
 }
 
 async fn integrations(

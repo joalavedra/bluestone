@@ -7,9 +7,9 @@ use async_trait::async_trait;
 use serde_json::{Value, json};
 
 pub struct Holded {
-    http: reqwest::Client,
-    base: String,
-    key: String,
+    pub(crate) http: reqwest::Client,
+    pub(crate) base: String,
+    pub(crate) key: String,
 }
 
 impl Holded {
@@ -41,7 +41,22 @@ impl Holded {
             .with_context(|| format!("Holded {path} returned no id"))
     }
 
-    async fn document(&self, doc_type: &str, doc: &Doc) -> Result<String> {
+    /// GET on the invoicing API, as JSON.
+    pub(crate) async fn get(&self, path: &str, query: &[(&str, String)]) -> Result<Value> {
+        Ok(self
+            .http
+            .get(format!("{}/{path}", self.base))
+            .header("key", &self.key)
+            .query(query)
+            .send()
+            .await?
+            .error_for_status()
+            .with_context(|| format!("Holded {path} failed"))?
+            .json()
+            .await?)
+    }
+
+    pub(crate) async fn document(&self, doc_type: &str, doc: &Doc) -> Result<String> {
         let date = chrono::NaiveDate::parse_from_str(&doc.date, "%Y-%m-%d")?
             .and_hms_opt(12, 0, 0)
             .context("bad date")?

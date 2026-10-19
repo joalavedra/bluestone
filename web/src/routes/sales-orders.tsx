@@ -3,7 +3,7 @@ import { AlertTriangle, Ban, Check, PackageCheck, X } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
 import { Empty, PageHeader } from "@/components/bits"
-import { BooksButton } from "@/components/books"
+import { BooksButton, ErpButton } from "@/components/books"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -113,6 +113,11 @@ function SoCard({ so }: { so: SalesOrder }) {
             <BooksButton
               brand={so.brand}
               source="sales_order"
+              id={so.id}
+              ready={["confirmed", "fulfilled"].includes(so.status)}
+            />
+            <ErpButton
+              brand={so.brand}
               id={so.id}
               ready={["confirmed", "fulfilled"].includes(so.status)}
             />
