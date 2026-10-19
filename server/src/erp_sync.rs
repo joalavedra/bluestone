@@ -324,12 +324,15 @@ impl Service {
     pub async fn erp_links(&self, item_id: i64) -> SResult<Vec<ErpLink>> {
         Ok(sqlx::query_as(
             // The item's own SKU or any of its listings' SKUs (merged items keep the source's
-            // listings), ignoring case like `resolve_item`.
+            // listings), ignoring case like `resolve_item` unless another item has the exact SKU.
             "SELECT DISTINCT c.kind AS system, p.code, p.name, p.stock FROM items i
              JOIN erp_connections c ON c.brand_id = i.brand_id AND c.active = 1
              JOIN erp_products p ON p.connection_id = c.id
-             WHERE i.id = ? AND (p.sku = i.sku COLLATE NOCASE
-               OR EXISTS (SELECT 1 FROM listings l WHERE l.item_id = i.id AND l.sku = p.sku COLLATE NOCASE))
+             WHERE i.id = ? AND (p.sku = i.sku
+               OR EXISTS (SELECT 1 FROM listings l WHERE l.item_id = i.id AND l.sku = p.sku)
+               OR (NOT EXISTS (SELECT 1 FROM items j WHERE j.brand_id = i.brand_id AND j.sku = p.sku)
+                   AND (p.sku = i.sku COLLATE NOCASE
+                        OR EXISTS (SELECT 1 FROM listings l WHERE l.item_id = i.id AND l.sku = p.sku COLLATE NOCASE))))
              ORDER BY p.code",
         )
         .bind(item_id)
