@@ -285,6 +285,7 @@ fn holded_seed(store: &mut Store) {
         ("hp001", "NW-ESP-250", "Espresso blend 250g", 31.0),
         ("hp002", "NW-ETH-250", "Ethiopia Guji 250g", 12.0),
         ("hp003", "", "Gift wrapping", 0.0),
+        ("hp004", "nw-col-250", "Colombia 250g", 7.0),
     ];
     store.holded.insert(
         "products".into(),

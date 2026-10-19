@@ -30,15 +30,17 @@ test "$(code "$AGENT" erp '{"brand":"Northwind Coffee","kind":"holded","credenti
 curl "${H[@]}" -X POST $API/integrations/test -d "${ERP_IN/HOLDED_DEV_KEY/HOLDED_BAD_KEY}" | jq -c .
 test "$(curl "${H[@]}" -X POST $API/integrations/test -d "${ERP_IN/HOLDED_DEV_KEY/HOLDED_BAD_KEY}" | jq .ok)" = false
 curl "${H[@]}" -X POST $API/integrations/test -d "$ERP_IN" | jq -c .
-test "$(curl "${H[@]}" -X POST $API/integrations/test -d "$ERP_IN" | jq -r .message)" = "Holded (ERP): API key works · 3 products"
+test "$(curl "${H[@]}" -X POST $API/integrations/test -d "$ERP_IN" | jq -r .message)" = "Holded (ERP): API key works · 4 products"
 test "$(curl "${H[@]}" -X POST $API/integrations -d "$ERP_IN" | jq -r .kind)" = erp
 curl "${H[@]}" $API/integrations | jq -c '.connections[] | select(.kind == "erp") | {connector, brand, label: .label, credential_source}'
 
 echo "--- pull products, match to items by SKU"
 curl "${H[@]}" -X POST $API/erp/sync -d '{"brand":"Northwind Coffee"}' | jq -c '{kind, products, matched}'
-test "$(curl "${H[@]}" $API/erp | jq -c '.connections[0] | [.products, .matched]')" = "[3,2]"
+test "$(curl "${H[@]}" $API/erp | jq -c '.connections[0] | [.products, .matched]')" = "[4,3]"
 ITEM=$(curl "${H[@]}" "$API/items?query=NW-ESP-250" | jq '.[0].id')
 curl "${H[@]}" "$API/items/$ITEM" | jq -c .erp
+COL=$(curl "${H[@]}" "$API/items?query=NW-COL-250" | jq '.[0].id')
+test "$(curl "${H[@]}" "$API/items/$COL" | jq -r '.erp[0].code')" = hp004
 test "$(curl "${H[@]}" "$API/items/$ITEM" | jq -c '.erp[0] | [.system, .code, .stock]')" = '["holded","hp001",31.0]' \
   || test "$(curl "${H[@]}" "$API/items/$ITEM" | jq -c '.erp[0] | [.system, .code, .stock]')" = '["holded","hp001",31]'
 
@@ -65,5 +67,7 @@ curl "${H[@]}" -X POST $API/erp -d '{"brand":"Northwind Coffee","kind":"holded",
 test "$(curl -s -o /dev/null -w '%{http_code}' "${H[@]/-sf/-s}" -X POST $API/erp/sync -d '{"brand":"Northwind Coffee"}')" = 500
 curl "${H[@]}" $API/erp | jq -c '.connections[0] | {last_sync_error}'
 test "$(curl -sf -H "Authorization: Bearer $AGENT" $API/erp | jq -r '.connections[0].last_sync_error')" = "sync failed (details visible to human tokens)"
+AGENT_SYNC=$(curl -s -H "Authorization: Bearer $AGENT" -H "Content-Type: application/json" -X POST $API/erp/sync -d '{"brand":"Northwind Coffee"}')
+echo "agent sync: $AGENT_SYNC"; echo "$AGENT_SYNC" | grep -q "details visible to human tokens" && ! echo "$AGENT_SYNC" | grep -q 401
 curl "${H[@]}" "$API/activity?limit=50" | jq -r '.[] | select(.action | startswith("erp")) | .summary' | head -5
 echo "erp smoke OK"

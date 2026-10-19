@@ -42,8 +42,9 @@ impl Holded {
     }
 
     /// GET on the invoicing API, as JSON.
+    /// Holded can answer 200 with `{"status": 0, "info": ...}` on errors, so that is an error too.
     pub(crate) async fn get(&self, path: &str, query: &[(&str, String)]) -> Result<Value> {
-        Ok(self
+        let v: Value = self
             .http
             .get(format!("{}/{path}", self.base))
             .header("key", &self.key)
@@ -53,7 +54,12 @@ impl Holded {
             .error_for_status()
             .with_context(|| format!("Holded {path} failed"))?
             .json()
-            .await?)
+            .await?;
+        if v["status"].as_i64() == Some(0) {
+            let msg = v["info"].as_str().unwrap_or("no details");
+            return Err(anyhow!("Holded {path} failed: {msg}"));
+        }
+        Ok(v)
     }
 
     pub(crate) async fn document(&self, doc_type: &str, doc: &Doc) -> Result<String> {

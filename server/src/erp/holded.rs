@@ -42,19 +42,26 @@ fn list(v: &Value) -> &[Value] {
     v.as_array().map_or(&[], Vec::as_slice)
 }
 
+/// A top-level list; anything else means Holded didn't return what we asked for.
+fn array<'a>(v: &'a Value, what: &str) -> Result<&'a [Value]> {
+    v.as_array()
+        .map(Vec::as_slice)
+        .with_context(|| format!("Holded {what}: expected a list"))
+}
+
 #[async_trait]
 impl Erp for HoldedErp {
     async fn check(&self) -> Result<String> {
         let products = self.0.get("products", &[]).await?;
         Ok(format!(
             "API key works · {} products",
-            list(&products).len()
+            array(&products, "products")?.len()
         ))
     }
 
     async fn products(&self) -> Result<Vec<Product>> {
         let v = self.0.get("products", &[]).await?;
-        Ok(list(&v)
+        Ok(array(&v, "products")?
             .iter()
             .filter_map(|p| {
                 Some(Product {
@@ -75,7 +82,7 @@ impl Erp for HoldedErp {
         let docs = self.0.get("documents/invoice", &query).await?;
         let mut countries: HashMap<String, Option<String>> = HashMap::new();
         let mut out = Vec::new();
-        for d in list(&docs) {
+        for d in array(&docs, "invoices")? {
             let contact = text(&d["contact"]).unwrap_or_default();
             if !contact.is_empty() && !countries.contains_key(&contact) {
                 let c = self.0.get(&format!("contacts/{contact}"), &[]).await?;
@@ -113,7 +120,7 @@ impl Erp for HoldedErp {
 
     async fn find_order(&self, number: &str) -> Result<Option<String>> {
         let docs = self.0.get("documents/salesorder", &[]).await?;
-        Ok(list(&docs)
+        Ok(array(&docs, "sales orders")?
             .iter()
             .find(|d| d["docNumber"].as_str() == Some(number))
             .and_then(|d| text(&d["id"])))

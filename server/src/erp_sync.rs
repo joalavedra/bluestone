@@ -87,8 +87,10 @@ struct ConnRow {
 const CONN_SELECT: &str =
     "SELECT c.id, b.name AS brand, c.kind, c.base_url, c.last_synced_at, c.last_sync_error,
   (SELECT COUNT(*) FROM erp_products p WHERE p.connection_id = c.id) AS products,
-  (SELECT COUNT(*) FROM erp_products p JOIN items i ON i.brand_id = c.brand_id AND i.sku = p.sku
-    WHERE p.connection_id = c.id) AS matched
+  (SELECT COUNT(*) FROM erp_products p WHERE p.connection_id = c.id AND (
+    EXISTS (SELECT 1 FROM items i WHERE i.brand_id = c.brand_id AND i.sku = p.sku COLLATE NOCASE)
+    OR EXISTS (SELECT 1 FROM listings l JOIN items i ON i.id = l.item_id
+               WHERE i.brand_id = c.brand_id AND l.sku = p.sku COLLATE NOCASE))) AS matched
 FROM erp_connections c JOIN brands b ON b.id = c.brand_id WHERE c.active = 1";
 
 const ORDER_SELECT: &str = "SELECT o.id, o.connection_id, b.name AS brand, c.kind AS system, o.sales_order_id, o.status,
@@ -107,6 +109,18 @@ fn human(who: &Principal) -> SResult<()> {
 
 fn is_human(who: &Principal) -> bool {
     who.kind == "human" || who.kind == "system"
+}
+
+/// Provider errors can carry ERP details; agents get a generic message (the server log keeps it).
+fn provider_error(who: &Principal, e: anyhow::Error, what: &str) -> ServiceError {
+    if is_human(who) {
+        ServiceError::Internal(e.context(format!("{what} failed")))
+    } else {
+        tracing::warn!(error = %format!("{e:#}"), "{what} failed for {}", who.name);
+        ServiceError::Internal(anyhow::anyhow!(
+            "{what} failed (details visible to human tokens)"
+        ))
+    }
 }
 
 impl Service {
@@ -242,8 +256,10 @@ impl Service {
                     .bind(conn.id)
                     .execute(&self.pool)
                     .await?;
-                return Err(ServiceError::Internal(
-                    e.context(format!("{} sync failed", erp::label(&conn.kind))),
+                return Err(provider_error(
+                    who,
+                    e,
+                    &format!("{} sync", erp::label(&conn.kind)),
                 ));
             }
         };
@@ -301,16 +317,20 @@ impl Service {
             return invalid("`from` must be on or before `to`");
         }
         let conn = self.erp_conn(&a.brand).await?;
-        let erp = self.erp_client(&conn).await?;
-        Ok(erp.invoices(&a.from, &a.to).await?)
+        let read = async { self.erp_client(&conn).await?.invoices(&a.from, &a.to).await }.await;
+        read.map_err(|e| provider_error(who, e, &format!("{} invoices", erp::label(&conn.kind))))
     }
 
     pub async fn erp_links(&self, item_id: i64) -> SResult<Vec<ErpLink>> {
         Ok(sqlx::query_as(
-            "SELECT c.kind AS system, p.code, p.name, p.stock FROM items i
+            // The item's own SKU or any of its listings' SKUs (merged items keep the source's
+            // listings), ignoring case like `resolve_item`.
+            "SELECT DISTINCT c.kind AS system, p.code, p.name, p.stock FROM items i
              JOIN erp_connections c ON c.brand_id = i.brand_id AND c.active = 1
-             JOIN erp_products p ON p.connection_id = c.id AND p.sku = i.sku
-             WHERE i.id = ? ORDER BY p.code",
+             JOIN erp_products p ON p.connection_id = c.id
+             WHERE i.id = ? AND (p.sku = i.sku COLLATE NOCASE
+               OR EXISTS (SELECT 1 FROM listings l WHERE l.item_id = i.id AND l.sku = p.sku COLLATE NOCASE))
+             ORDER BY p.code",
         )
         .bind(item_id)
         .fetch_all(&self.pool)
@@ -367,6 +387,22 @@ impl Service {
                 ))),
             };
         };
+        // A cancel may have landed between the status check above and the claim: re-check, and
+        // drop the claim so the order stays cancellable.
+        let current = self.sales_order(who, id).await?;
+        if !["confirmed", "fulfilled"].contains(&current.status.as_str()) {
+            sqlx::query(
+                "DELETE FROM erp_orders WHERE id = ? AND claim = ? AND external_id IS NULL",
+            )
+            .bind(row.id)
+            .bind(&claim)
+            .execute(&self.pool)
+            .await?;
+            return invalid(format!(
+                "SO #{id} is {}; only confirmed sales orders go to the ERP",
+                current.status
+            ));
+        }
         let order = Order {
             number: format!("SO-{id}"),
             date: chrono::Utc::now().format("%Y-%m-%d").to_string(),

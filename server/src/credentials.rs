@@ -75,7 +75,8 @@ pub async fn drop_unused_secret(pool: &SqlitePool, reference: &str) -> Result<()
     sqlx::query(
         "DELETE FROM secrets WHERE id = ?2 AND NOT EXISTS (
            SELECT 1 FROM channels WHERE credential_env = ?1
-           UNION ALL SELECT 1 FROM accounting_connections WHERE credential_env = ?1)",
+           UNION ALL SELECT 1 FROM accounting_connections WHERE credential_env = ?1
+           UNION ALL SELECT 1 FROM erp_connections WHERE credential_env = ?1)",
     )
     .bind(reference)
     .bind(id)
