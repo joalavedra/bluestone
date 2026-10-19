@@ -330,7 +330,7 @@ impl Service {
              JOIN erp_products p ON p.connection_id = c.id
              WHERE i.id = ? AND (p.sku = i.sku
                OR EXISTS (SELECT 1 FROM listings l WHERE l.item_id = i.id AND l.sku = p.sku)
-               OR (NOT EXISTS (SELECT 1 FROM items j WHERE j.brand_id = i.brand_id AND j.sku = p.sku)
+               OR (NOT EXISTS (SELECT 1 FROM items j WHERE j.brand_id = i.brand_id AND j.sku = p.sku AND j.archived = 0)
                    AND (p.sku = i.sku COLLATE NOCASE
                         OR EXISTS (SELECT 1 FROM listings l WHERE l.item_id = i.id AND l.sku = p.sku COLLATE NOCASE))))
              ORDER BY p.code",
