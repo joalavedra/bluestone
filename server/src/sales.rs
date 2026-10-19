@@ -322,7 +322,9 @@ impl Service {
         let r = sqlx::query(
             "UPDATE sales_orders SET status = ?1, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
                approved_by = CASE WHEN ?1 = 'confirmed' THEN ?2 ELSE approved_by END
-             WHERE id = ?3 AND status = ?4",
+             WHERE id = ?3 AND status = ?4
+               AND (?1 != 'cancelled' OR NOT EXISTS (SELECT 1 FROM erp_orders
+                    WHERE sales_order_id = ?3 AND status IN ('pending', 'exported')))",
         )
         .bind(to)
         .bind(&who.name)
@@ -331,6 +333,10 @@ impl Service {
         .execute(&self.pool)
         .await?;
         if r.rows_affected() == 0 {
+            // An ERP push claimed the order between the cancel's check and this update.
+            if to == "cancelled" {
+                self.ensure_not_in_erp(id).await?;
+            }
             return Err(ServiceError::Conflict(format!(
                 "SO #{id} is {}, not {from}",
                 row.status

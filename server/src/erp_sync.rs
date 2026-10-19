@@ -360,11 +360,14 @@ impl Service {
             });
         }
         let conn = self.erp_conn(&so.brand).await?;
-        // Claim: a new row, a failed one, or a pending one abandoned for 10 minutes. The claim token
-        // stops a superseded push from overwriting the newer one's result.
+        // Claim: a new row, a failed one, or a pending one abandoned for 10 minutes, and only while
+        // the SO is confirmed/fulfilled. Cancelling refuses once a claim exists, so a push and a
+        // cancel can't both win. The claim token stops a superseded push from overwriting the
+        // newer one's result.
         let claim: Option<(String,)> = sqlx::query_as(
             "INSERT INTO erp_orders (connection_id, sales_order_id, status, created_by, claim)
-             VALUES (?, ?, 'pending', ?, lower(hex(randomblob(16))))
+             SELECT ?1, ?2, 'pending', ?3, lower(hex(randomblob(16)))
+             WHERE EXISTS (SELECT 1 FROM sales_orders WHERE id = ?2 AND status IN ('confirmed', 'fulfilled'))
              ON CONFLICT(connection_id, sales_order_id) DO UPDATE
                SET status = 'pending', error = NULL, created_by = excluded.created_by, claim = excluded.claim,
                    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
@@ -378,8 +381,15 @@ impl Service {
         .bind(&who.name)
         .fetch_optional(&self.pool)
         .await?;
-        let row = self.erp_order(conn.id, id).await?;
         let Some((claim,)) = claim else {
+            let current = self.sales_order(who, id).await?;
+            if !["confirmed", "fulfilled"].contains(&current.status.as_str()) {
+                return invalid(format!(
+                    "SO #{id} is {}; only confirmed sales orders go to the ERP",
+                    current.status
+                ));
+            }
+            let row = self.erp_order(conn.id, id).await?;
             return match row.status.as_str() {
                 "exported" => Ok(row),
                 _ => Err(ServiceError::Conflict(format!(
@@ -387,22 +397,7 @@ impl Service {
                 ))),
             };
         };
-        // A cancel may have landed between the status check above and the claim: re-check, and
-        // drop the claim so the order stays cancellable.
-        let current = self.sales_order(who, id).await?;
-        if !["confirmed", "fulfilled"].contains(&current.status.as_str()) {
-            sqlx::query(
-                "DELETE FROM erp_orders WHERE id = ? AND claim = ? AND external_id IS NULL",
-            )
-            .bind(row.id)
-            .bind(&claim)
-            .execute(&self.pool)
-            .await?;
-            return invalid(format!(
-                "SO #{id} is {}; only confirmed sales orders go to the ERP",
-                current.status
-            ));
-        }
+        let row = self.erp_order(conn.id, id).await?;
         let order = Order {
             number: format!("SO-{id}"),
             date: chrono::Utc::now().format("%Y-%m-%d").to_string(),
