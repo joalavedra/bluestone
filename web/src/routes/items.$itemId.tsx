@@ -93,7 +93,11 @@ function ItemPage() {
         <Kpi
           label="On hand"
           value={num(item.on_hand)}
-          hint={item.reserved ? `${num(item.reserved)} reserved · ${num(item.available)} available` : undefined}
+          hint={
+            item.reserved
+              ? `${num(item.reserved)} reserved · ${num(item.available)} available`
+              : undefined
+          }
           tone={item.reserved ? "warn" : "default"}
         />
         <Kpi
@@ -172,6 +176,24 @@ function ItemPage() {
                   ))}
                 </TableBody>
               </Table>
+              {item.erp.map((e) => (
+                <div
+                  key={`${e.system}-${e.code}`}
+                  className="mt-3 text-sm text-muted-foreground"
+                >
+                  ERP ({e.system}): code{" "}
+                  <span className="font-medium text-foreground">{e.code}</span>
+                  {e.stock !== null && (
+                    <>
+                      {" "}
+                      · stock{" "}
+                      <span className="font-medium text-foreground tabular-nums">
+                        {e.stock}
+                      </span>
+                    </>
+                  )}
+                </div>
+              ))}
             </CardContent>
           </Card>
           {item.stock_mode === "master" && <LedgerCard item={item} />}

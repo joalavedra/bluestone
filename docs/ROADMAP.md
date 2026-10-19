@@ -43,6 +43,8 @@ Why: brands selling on both platforms double-count or oversell; one master quant
 - ✅ Faire (wholesale).
 - Amazon, TikTok Shop, WooCommerce.
 - ✅ Accounting sync (QuickBooks + Holded): PO → bill, SO → invoice.
+- ✅ Generic ERP interface with Holded: products/codes/stock by SKU, invoices, SO → ERP order.
+- Odoo and ICG ERP adapters; Intrastat (weight, tariff code, origin per item → monthly AEAT file).
 - Cost import from the books; margin, stock value and COGS journals.
 - Multi-user orgs, SSO, hosted offering.
 

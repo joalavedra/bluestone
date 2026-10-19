@@ -319,6 +319,8 @@ pub struct ItemDetail {
     /// Master mode only: ledger quantity per warehouse and the latest ledger entries.
     pub warehouses: Vec<crate::ledger::StockLevel>,
     pub ledger: Vec<crate::ledger::LedgerEntry>,
+    /// The item's product in its brand's ERP (same SKU), from the last ERP sync.
+    pub erp: Vec<crate::erp_sync::ErpLink>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -710,6 +712,7 @@ impl Service {
             (Vec::new(), Vec::new())
         };
         Ok(ItemDetail {
+            erp: self.erp_links(id).await?,
             stock_mode,
             warehouses,
             ledger,

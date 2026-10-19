@@ -73,4 +73,5 @@ Status: ✅ in v0 · 🟡 partial · 🔜 planned (see ROADMAP.md) · ✖ out of
 | Faire (wholesale) | ✔ | External API v2: products/variants, on-hand inventory, wholesale price, orders | ✅ |
 | Amazon, TikTok Shop | ✔ | – | 🔜 phase 3 |
 | QuickBooks / Holded | ✔ | PO → bill, SO → invoice (one interface, both systems) | ✅ |
+| ERP (Holded; Odoo, ICG, Sage, a3ERP next) | – | One interface: ERP products matched to items by SKU (code + stock on the item), invoices with customer country, confirmed SO → ERP order | ✅ Holded |
 | Webhooks (real-time) | ✔ | Shopify `inventory_levels/update`, `orders/create` | 🔜 phase 1 |
